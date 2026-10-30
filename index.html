@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Staff Virtual Office</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="app">
+    <main class="stage">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo"></span>
+          <b id="title"></b>
+          <span class="badge" id="modeBadge">Simulation</span>
+        </div>
+        <div class="stats" id="stats"></div>
+      </header>
+
+      <canvas id="office"></canvas>
+
+      <div class="legend" id="legend"></div>
+
+      <div class="tod" id="tod">
+        <button data-mode="now" class="on">Now</button>
+        <button data-mode="day">Day</button>
+        <button data-mode="evening">Evening</button>
+        <button data-mode="night">Night</button>
+      </div>
+
+      <button class="sim" id="simBtn">Stop Simulation</button>
+    </main>
+
+    <aside class="side">
+      <div class="owner">
+        <span class="avatar" id="ownerAvatar"></span>
+        <b id="ownerName"></b>
+        <span class="badge" id="ownerBadge">Simulation</span>
+      </div>
+      <section class="card">
+        <h3>Team <span id="teamCount"></span></h3>
+        <ul id="team"></ul>
+      </section>
+      <section class="card grow">
+        <h3>Activity <span class="muted" id="actMode">Simulated</span></h3>
+        <ul id="activity"></ul>
+      </section>
+    </aside>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

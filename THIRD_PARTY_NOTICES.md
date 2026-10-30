@@ -1,4 +1,9 @@
-# Third-party notices (Bot Office visuals)
+# Third-party notices
+
+> **Current code (v2) is original** and does not vendor or adapt any of the projects below.
+> The entries below are kept for the earlier Three.js implementation, which is preserved in git history
+> (commit `9b08abc`), because that code adapted ideas from these MIT-licensed projects.
+> Visual reference for v2: https://x.com/dallastesla/status/2115536116162216197
 
 ## morluto/rea
 - Source: https://github.com/morluto/rea

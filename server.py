@@ -1,180 +1,220 @@
 #!/usr/bin/env python3
-"""Bot Office local server — serves static UI and proxies webhook pings.
-Key never leaves this process; never served to the browser.
-"""
-from __future__ import annotations
+"""办公室服务器:静态页面 + 事件中继。
 
+  Grok Bot --POST /api/events--> 本服务器(校验) --SSE /api/events/stream--> 浏览器里的办公室
+
+只用 Python 标准库。默认只监听 127.0.0.1,所以只有本机进程能发事件。
+如果设置了环境变量 OFFICE_TOKEN,POST 必须带 `Authorization: Bearer <token>`。
+"""
+import argparse
 import json
 import os
-import sys
-import urllib.error
-import urllib.request
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import queue
+import re
+import threading
+import time
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PUBLIC = ROOT / "public"
-WEBHOOK_URL_FILE = ROOT / "webhook.url"
-WEBHOOK_KEY_FILE = ROOT / "webhook.key"
-PORT = int(os.environ.get("BOT_OFFICE_PORT", "8787"))
-HOST = "0.0.0.0"
-TIMEOUT = 8
+
+# 必须和 src/config.js 的 STATES 一致(tests/test_server.py 会检查)
+STATES = ("coding", "browsing", "terminal", "needsYou", "thinking", "error", "idle")
+EVENT_TYPES = ("status", "handoff", "sync")
+MAX_BODY = 16 * 1024
+MAX_TEXT = 200
 
 
-def load_webhook_url() -> str:
-    return WEBHOOK_URL_FILE.read_text(encoding="utf-8").strip()
+def load_roster(config_path=ROOT / "src" / "config.js"):
+    """从 config.js 读出 {id: name}。这样"有哪些 bot"只有一个来源。"""
+    src = Path(config_path).read_text(encoding="utf-8")
+    return {m.group(1): m.group(2) for m in re.finditer(r"\bid:\s*'([^']+)',\s*name:\s*'([^']+)'", src)}
 
 
-def load_webhook_key() -> str:
-    env = os.environ.get("BOT_OFFICE_WEBHOOK_KEY", "").strip()
-    if env:
-        return env
-    return WEBHOOK_KEY_FILE.read_text(encoding="utf-8").strip()
+class EventError(Exception):
+    def __init__(self, status, message, **extra):
+        super().__init__(message)
+        self.status = status
+        self.body = {"error": message, **extra}
 
 
-def post_webhook(payload: dict) -> tuple[int, str]:
-    url = load_webhook_url()
-    key = load_webhook_key()
-    body = json.dumps(payload).encode("utf-8")
-    req = urllib.request.Request(
-        url,
-        data=body,
-        method="POST",
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-            "X-Automation-Key": key,
-            "User-Agent": "bot-office/1.0",
-        },
-    )
+class Hub:
+    """保存每个 bot 的最新状态,并把事件广播给所有已连接的浏览器。"""
+
+    def __init__(self, roster):
+        self.roster = roster
+        self.last = {}  # agent_id -> 最近一条 status 事件
+        self.subscribers = set()
+        self.lock = threading.Lock()
+
+    def resolve(self, ref):
+        key = str(ref or "").strip().lower()
+        for agent_id, name in self.roster.items():
+            if key == agent_id or key == name.lower():
+                return agent_id
+        return None
+
+    def validate(self, payload):
+        """把外部传来的 JSON 变成干净的事件;不合法就抛 EventError。"""
+        if not isinstance(payload, dict):
+            raise EventError(400, "body must be a JSON object")
+        etype = payload.get("type", "status")
+        if etype not in EVENT_TYPES:
+            raise EventError(422, f"unknown type {etype!r}", types=list(EVENT_TYPES))
+        event = {"type": etype, "ts": time.time()}
+        if etype == "sync":
+            return event
+
+        known = list(self.roster)
+        agent = self.resolve(payload.get("agent"))
+        if agent is None:
+            raise EventError(422, f"unknown agent {payload.get('agent')!r}", agents=known)
+        event["agent"] = agent
+
+        text = payload.get("text", "")
+        if not isinstance(text, str) or len(text) > MAX_TEXT:
+            raise EventError(422, f"text must be a string up to {MAX_TEXT} characters")
+        event["text"] = text.strip()
+
+        state = payload.get("state")
+        if etype == "status":
+            if state not in STATES:
+                raise EventError(422, f"state must be one of {list(STATES)}", states=list(STATES))
+            event["state"] = state
+        else:  # handoff
+            target = self.resolve(payload.get("to"))
+            if target is None or target == agent:
+                raise EventError(422, "'to' must be a different known agent", agents=known)
+            event["to"] = target
+            if state is not None:
+                if state not in STATES:
+                    raise EventError(422, f"state must be one of {list(STATES)}", states=list(STATES))
+                event["state"] = state
+        return event
+
+    def publish(self, event):
+        with self.lock:
+            if event["type"] == "status":
+                self.last[event["agent"]] = event
+            for q in list(self.subscribers):
+                try:
+                    q.put_nowait(("event", event))
+                except queue.Full:  # 浏览器卡死了,丢掉它,不拖累别人
+                    self.subscribers.discard(q)
+
+    def subscribe(self):
+        q = queue.Queue(maxsize=200)
+        with self.lock:
+            self.subscribers.add(q)
+            q.put(("snapshot", list(self.last.values())))  # 刷新页面后能立刻恢复现状
+        return q
+
+    def unsubscribe(self, q):
+        with self.lock:
+            self.subscribers.discard(q)
+
+
+def make_handler(hub, token):
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, directory=str(ROOT), **kwargs)
+
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-store")  # 开发期不缓存,改了代码刷新就生效
+            super().end_headers()
+
+        def log_message(self, fmt, *args):
+            if "/api/events/stream" not in (args[0] if args else ""):
+                super().log_message(fmt, *args)
+
+        def reply(self, status, body):
+            data = json.dumps(body).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def do_GET(self):
+            path = self.path.split("?", 1)[0]
+            if path == "/api/health":
+                return self.reply(200, {"ok": True, "subscribers": len(hub.subscribers)})
+            if path == "/api/agents":
+                return self.reply(200, {"agents": hub.roster, "states": list(STATES), "types": list(EVENT_TYPES)})
+            if path == "/api/events/stream":
+                return self.stream()
+            return super().do_GET()
+
+        def do_POST(self):
+            if self.path.split("?", 1)[0] != "/api/events":
+                return self.reply(404, {"error": "not found"})
+            try:
+                if token and self.headers.get("Authorization") != f"Bearer {token}":
+                    raise EventError(401, "missing or wrong bearer token")
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except ValueError:
+                    raise EventError(400, "bad Content-Length")
+                if length <= 0:
+                    raise EventError(400, "empty body")
+                if length > MAX_BODY:
+                    raise EventError(413, f"body larger than {MAX_BODY} bytes")
+                try:
+                    payload = json.loads(self.rfile.read(length))
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    raise EventError(400, "body is not valid JSON")
+                event = hub.validate(payload)
+            except EventError as e:
+                return self.reply(e.status, e.body)
+            hub.publish(event)
+            self.reply(202, {"ok": True, "event": event, "watching": len(hub.subscribers)})
+
+        def stream(self):
+            q = hub.subscribe()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/event-stream")
+            self.send_header("Connection", "keep-alive")
+            self.end_headers()
+            try:
+                while True:
+                    try:
+                        kind, data = q.get(timeout=15)
+                    except queue.Empty:
+                        self.wfile.write(b": ping\n\n")  # 心跳,防止中间层把空闲连接掐掉
+                        self.wfile.flush()
+                        continue
+                    self.wfile.write(f"event: {kind}\ndata: {json.dumps(data)}\n\n".encode())
+                    self.wfile.flush()
+            except OSError:  # 浏览器关了页面
+                pass
+            finally:
+                hub.unsubscribe(q)
+
+    return Handler
+
+
+def make_server(host="127.0.0.1", port=8787, token=None, roster=None):
+    hub = Hub(roster or load_roster())
+    server = ThreadingHTTPServer((host, port), make_handler(hub, token))
+    server.daemon_threads = True
+    server.hub = hub
+    return server
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--host", default="127.0.0.1")
+    ap.add_argument("--port", type=int, default=8787)
+    args = ap.parse_args()
+    token = os.environ.get("OFFICE_TOKEN") or None
+    server = make_server(args.host, args.port, token)
+    print(f"Office:  http://{args.host}:{args.port}/")
+    print(f"Events:  POST http://{args.host}:{args.port}/api/events   (token {'required' if token else 'not required'})")
+    print(f"Bots:    {', '.join(server.hub.roster)}")
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            text = resp.read().decode("utf-8", errors="replace")
-            return resp.status, text
-    except urllib.error.HTTPError as e:
-        text = e.read().decode("utf-8", errors="replace") if e.fp else str(e)
-        return e.code, text
-    except Exception as e:
-        return 0, str(e)
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "BotOffice/1.0"
-
-    def log_message(self, fmt: str, *args) -> None:
-        # Never log Authorization / keys; request line only
-        sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
-
-    def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-
-    def _json(self, code: int, obj: dict) -> None:
-        data = json.dumps(obj, ensure_ascii=False).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
-        self._cors()
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_OPTIONS(self) -> None:
-        self.send_response(204)
-        self._cors()
-        self.end_headers()
-
-    def do_GET(self) -> None:
-        path = self.path.split("?", 1)[0]
-        if path in ("/health", "/api/health"):
-            self._json(200, {"ok": True, "service": "bot-office"})
-            return
-        if path == "/":
-            path = "/index.html"
-        # static from public/
-        rel = path.lstrip("/")
-        if ".." in rel or rel.startswith("/"):
-            self.send_error(400)
-            return
-        file_path = (PUBLIC / rel).resolve()
-        if not str(file_path).startswith(str(PUBLIC.resolve())):
-            self.send_error(403)
-            return
-        if not file_path.is_file():
-            self.send_error(404)
-            return
-        ctype = {
-            ".html": "text/html; charset=utf-8",
-            ".css": "text/css; charset=utf-8",
-            ".js": "application/javascript; charset=utf-8",
-            ".svg": "image/svg+xml",
-            ".png": "image/png",
-            ".ico": "image/x-icon",
-            ".json": "application/json",
-            ".woff2": "font/woff2",
-        }.get(file_path.suffix.lower(), "application/octet-stream")
-        data = file_path.read_bytes()
-        self.send_response(200)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_POST(self) -> None:
-        path = self.path.split("?", 1)[0]
-        if path != "/api/ping":
-            self.send_error(404)
-            return
-        length = int(self.headers.get("Content-Length", "0") or 0)
-        if length > 65536:
-            self._json(413, {"ok": False, "error": "body too large"})
-            return
-        raw = self.rfile.read(length) if length else b"{}"
-        try:
-            client = json.loads(raw.decode("utf-8") or "{}")
-        except json.JSONDecodeError:
-            self._json(400, {"ok": False, "error": "invalid json"})
-            return
-
-        action = client.get("action") or "ping"
-        if action == "probe":
-            payload = {"action": "probe"}
-        elif action == "ping":
-            bot = (client.get("bot") or "").strip()
-            if not bot:
-                self._json(400, {"ok": False, "error": "bot required"})
-                return
-            msg = (client.get("message") or "").strip()
-            payload = {"action": "ping", "bot": bot}
-            if msg:
-                payload["message"] = msg
-        else:
-            self._json(400, {"ok": False, "error": "unknown action"})
-            return
-
-        status, text = post_webhook(payload)
-        ok = status == 200
-        self._json(
-            200 if ok else 502,
-            {
-                "ok": ok,
-                "upstream": status,
-                "detail": text[:500] if not ok else "ok",
-            },
-        )
-
-
-def main() -> None:
-    # Validate secrets exist (do not print them)
-    url = load_webhook_url()
-    key = load_webhook_key()
-    if not url or not key:
-        sys.stderr.write("missing webhook.url or webhook.key / BOT_OFFICE_WEBHOOK_KEY\n")
-        sys.exit(1)
-    httpd = ThreadingHTTPServer((HOST, PORT), Handler)
-    sys.stderr.write("bot-office listening on http://%s:%s\n" % (HOST, PORT))
-    httpd.serve_forever()
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nbye")
 
 
 if __name__ == "__main__":
