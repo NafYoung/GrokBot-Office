@@ -1,7 +1,7 @@
 // 所有"数据"都在这里:谁在办公室、办公室长什么样。
 // 改这个文件就能换人、换布局,不用碰渲染和模拟逻辑。
 
-export const OWNER = 'David';
+export const OWNER = 'YOUNG NAF';
 
 // 地面格子数:w 沿 gx 方向(向右下),d 沿 gy 方向(向左下)
 export const GRID = { w: 14, d: 10 };
@@ -19,95 +19,93 @@ export const STATES = {
 // handoff.to:交接对象;text:活动日志文案
 export const AGENTS = [
   {
-    id: 'alfred', name: 'Alfred', role: 'Chief of Staff', color: '#2f5bff',
+    id: 'grok', name: 'Grok Bot', role: '前台总管', color: '#2f5bff',
     tasks: [
-      { state: 'thinking', text: 'Planning the week for the team' },
+      { state: 'thinking', text: 'Routing the next ask' },
+      { state: 'coding', text: 'Coordinating teammates' },
+    ],
+    handoffs: [{ to: 'zhuxian', text: 'Handed a main-track task to 主线学习总管' }],
+  },
+  {
+    id: 'newbee', name: 'newbee naf', role: '个人助理', color: '#facc15',
+    tasks: [
+      { state: 'browsing', text: 'Checking calendar and inbox' },
+      { state: 'thinking', text: 'Planning the day' },
+    ],
+    handoffs: [{ to: 'grok', text: 'Escalated to Grok Bot' }],
+  },
+  {
+    id: 'guan', name: '观世界', role: 'AI 资讯', color: '#22d3ee',
+    tasks: [
+      { state: 'browsing', text: 'Scanning OpenAI / Anthropic / xAI / Meta' },
       { state: 'coding', text: 'Writing the morning brief' },
     ],
-    handoffs: [{ to: 'atlas', text: 'Sent the priorities to Atlas' }],
+    handoffs: [{ to: 'diaoyan', text: 'Flagged a paper for 调研简报' }],
   },
   {
-    id: 'atlas', name: 'Atlas', role: 'Calendar', color: '#facc15',
+    id: 'diaoyan', name: '调研简报', role: '调研写作', color: '#f97316',
     tasks: [
-      { state: 'thinking', text: "Lining up next week's calendar" },
-      { state: 'coding', text: 'Drafting meeting invites' },
-      { state: 'browsing', text: 'Checking availability' },
+      { state: 'browsing', text: 'Reading a paper or repo' },
+      { state: 'coding', text: 'Drafting a Chinese brief' },
     ],
-    handoffs: [{ to: 'alfred', text: 'Took the updated schedule to Alfred' }],
+    handoffs: [{ to: 'zhishiku', text: 'Filed notes to 知识库' }],
   },
   {
-    id: 'fetch', name: 'Fetch', role: 'Execution', color: '#f97316',
+    id: 'zhuxian', name: '主线学习总管', role: '主线教务', color: '#8b7cf6',
     tasks: [
-      { state: 'terminal', text: 'Running the errand checklist' },
-      { state: 'browsing', text: 'Tracking a delivery' },
+      { state: 'thinking', text: 'Planning the next study block' },
+      { state: 'coding', text: 'Preparing an experiment brief' },
     ],
-    handoffs: [{ to: 'claim', text: 'Dropped off a parcel for Claim' }],
+    handoffs: [{ to: 'python', text: 'Passed a Python drill to Roadmap' }],
   },
   {
-    id: 'scout', name: 'Scout', role: 'Research', color: '#22d3ee',
+    id: 'zhishiku', name: '知识库', role: '知识管理', color: '#22c55e',
     tasks: [
-      { state: 'browsing', text: 'Researching market reports' },
-      { state: 'coding', text: 'Summarizing findings' },
+      { state: 'coding', text: 'Filing a new knowledge note' },
+      { state: 'browsing', text: 'Retrieving related notes' },
     ],
-    handoffs: [{ to: 'radar', text: 'Handed over the research notes' }],
+    handoffs: [{ to: 'mianshi', text: 'Sent talking points to 面试陪练' }],
   },
   {
-    id: 'warren', name: 'Warren', role: 'Finance', color: '#22c55e',
+    id: 'mianshi', name: '面试陪练', role: '面试口述', color: '#fb923c',
     tasks: [
-      { state: 'coding', text: 'Reconciling the monthly budget' },
-      { state: 'browsing', text: 'Checking account balances' },
+      { state: 'thinking', text: 'Turning a method into spoken points' },
+      { state: 'coding', text: 'Drilling an interview answer' },
     ],
-    handoffs: [{ to: 'alfred', text: 'Delivered the budget file' }],
+    handoffs: [{ to: 'grok', text: 'Reported interview readiness' }],
   },
   {
-    id: 'claim', name: 'Claim', role: 'Insurance', color: '#9ca3af',
+    id: 'python', name: 'Python Roadmap', role: 'Python 辅导', color: '#92400e',
     tasks: [
-      { state: 'browsing', text: 'Reviewing a policy renewal' },
-      { state: 'coding', text: 'Filing claim paperwork' },
+      { state: 'coding', text: 'Coaching a Python exercise' },
+      { state: 'terminal', text: 'Checking a student run' },
     ],
-    handoffs: [{ to: 'warren', text: 'Passed the invoice to Warren' }],
-  },
-  {
-    id: 'radar', name: 'Radar', role: 'X Intel', color: '#1f2937',
-    tasks: [
-      { state: 'terminal', text: 'Scanning the X timeline' },
-      { state: 'browsing', text: 'Tracking trending topics' },
-    ],
-    handoffs: [{ to: 'scout', text: 'Flagged a trend for Scout' }],
-  },
-  {
-    id: 'drone', name: 'Drone Business', role: 'Drones', color: '#92400e',
-    tasks: [
-      { state: 'coding', text: 'Planning a drone shoot' },
-      { state: 'terminal', text: 'Editing aerial footage' },
-    ],
-    handoffs: [{ to: 'alfred', text: 'Sent the shoot plan to Alfred' }],
+    handoffs: [{ to: 'zhuxian', text: 'Sent progress back to 主线学习总管' }],
   },
 ];
 
-// 桌子占 (x,y)、(x+1,y) 两格;座位固定在 (x, y+1),访客站位在 (x+1, y+1)
+
 export const DESKS = {
-  alfred: { x: 7, y: 0 },
-  atlas:  { x: 4, y: 4 },
-  warren: { x: 8, y: 5 },
-  claim:  { x: 10, y: 8 },
-  fetch:  { x: 12, y: 4 },
-  scout:  { x: 10, y: 1 },
-  radar:  { x: 12, y: 1 },
-  drone:  { x: 1, y: 6 },
+  grok:    { x: 7, y: 0 },
+  newbee:  { x: 4, y: 4 },
+  zhuxian: { x: 8, y: 5 },
+  zhishiku:{ x: 10, y: 8 },
+  diaoyan: { x: 12, y: 4 },
+  guan:    { x: 10, y: 1 },
+  mianshi: { x: 12, y: 1 },
+  python:  { x: 1, y: 6 },
 };
 
-// 地毯分区(地面坐标,单位:格)
+
 export const RUGS = [
-  { label: 'DRONE BUSINESS',            color: '#a855f7', x0: 0.5,  y0: 5.5, x1: 3.5,  y1: 8.5 },
-  { label: 'CALENDAR AND SCHEDULING',   color: '#eab308', x0: 3.5,  y0: 3.5, x1: 6.5,  y1: 6.5 },
-  { label: 'FINANCE',                   color: '#22c55e', x0: 7,    y0: 4,   x1: 10,   y1: 7 },
-  { label: 'HEALTH AND INSURANCE',      color: '#ec4899', x0: 9,    y0: 7.5, x1: 12,   y1: 10 },
-  { label: 'OPERATIONS AND EXECUTION',  color: '#f97316', x0: 11.5, y0: 3.5, x1: 14,   y1: 6.5 },
-  { label: 'RESEARCH AND INTELLIGENCE', color: '#3b82f6', x0: 9.5,  y0: 0.2, x1: 14,   y1: 3.4 },
+  { label: 'PYTHON ROADMAP',     color: '#a855f7', x0: 0.5,  y0: 5.5, x1: 3.5,  y1: 8.5 },
+  { label: 'PERSONAL',           color: '#eab308', x0: 3.5,  y0: 3.5, x1: 6.5,  y1: 6.5 },
+  { label: 'MAIN TRACK',         color: '#8b7cf6', x0: 7,    y0: 4,   x1: 10,   y1: 7 },
+  { label: 'KNOWLEDGE',          color: '#22c55e', x0: 9,    y0: 7.5, x1: 12,   y1: 10 },
+  { label: 'RESEARCH',           color: '#f97316', x0: 11.5, y0: 3.5, x1: 14,   y1: 6.5 },
+  { label: 'WORLD + INTERVIEW',  color: '#3b82f6', x0: 9.5,  y0: 0.2, x1: 14,   y1: 3.4 },
 ];
 
-// 家具占用的格子(不能走)。桌子由 DESKS 自动加入。
 export const BLOCKS = [
   [0, 2], [0, 3], [0, 4], [0, 5],   // 厨房台面
   [2, 3], [2, 4],                   // 厨房中岛
