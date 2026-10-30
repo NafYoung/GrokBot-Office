@@ -1,0 +1,7 @@
+webhook.key
+webhook.url
+server.pid
+server.log
+*.mp4
+*-src/
+__pycache__/
