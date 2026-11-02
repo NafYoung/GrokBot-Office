@@ -56,7 +56,7 @@ export const AGENTS = [
       { state: 'thinking', text: 'Planning the next study block' },
       { state: 'coding', text: 'Preparing an experiment brief' },
     ],
-    handoffs: [{ to: 'python', text: 'Passed a Python drill to Roadmap' }],
+    handoffs: [{ to: 'zhishiku', text: 'Filed drill notes to 知识库' }],
   },
   {
     id: 'zhishiku', name: '知识库', role: '知识管理', color: '#22c55e',
@@ -75,12 +75,12 @@ export const AGENTS = [
     handoffs: [{ to: 'grok', text: 'Reported interview readiness' }],
   },
   {
-    id: 'python', name: 'Python Roadmap', role: 'Python 辅导', color: '#92400e',
+    id: 'qiwen', name: '奇闻异事', role: '观点闲聊', color: '#a855f7',
     tasks: [
-      { state: 'coding', text: 'Coaching a Python exercise' },
-      { state: 'terminal', text: 'Checking a student run' },
+      { state: 'thinking', text: 'Riffing on a take from X' },
+      { state: 'browsing', text: 'Reading an interesting thread' },
     ],
-    handoffs: [{ to: 'zhuxian', text: 'Sent progress back to 主线学习总管' }],
+    handoffs: [{ to: 'guan', text: 'Passed a news angle to 观世界' }],
   },
 ];
 
@@ -93,12 +93,12 @@ export const DESKS = {
   diaoyan: { x: 12, y: 4 },
   guan:    { x: 10, y: 1 },
   mianshi: { x: 12, y: 1 },
-  python:  { x: 1, y: 6 },
+  qiwen:   { x: 1, y: 6 },
 };
 
 
 export const RUGS = [
-  { label: 'PYTHON ROADMAP',     color: '#a855f7', x0: 0.5,  y0: 5.5, x1: 3.5,  y1: 8.5 },
+  { label: 'CASUAL',              color: '#a855f7', x0: 0.5,  y0: 5.5, x1: 3.5,  y1: 8.5 },
   { label: 'PERSONAL',           color: '#eab308', x0: 3.5,  y0: 3.5, x1: 6.5,  y1: 6.5 },
   { label: 'MAIN TRACK',         color: '#8b7cf6', x0: 7,    y0: 4,   x1: 10,   y1: 7 },
   { label: 'KNOWLEDGE',          color: '#22c55e', x0: 9,    y0: 7.5, x1: 12,   y1: 10 },
