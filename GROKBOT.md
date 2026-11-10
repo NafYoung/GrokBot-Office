@@ -45,7 +45,7 @@ Server: http://127.0.0.1:8787  (use curl; if OFFICE_TOKEN is set, send Authoriza
    - thinking  planning, waiting on a model
    - needsYou  blocked on the human
    - error     the task failed
-   - idle      nothing to do (send this occasionally if you want to stay "fresh")
+   - idle      nothing to do. While this stays fresh, the office may show them getting coffee, stretching, or sitting on the sofa. That loafing is not a task and does not mean they are working. Do not send a fake coding state just to look busy.
 
 3. When one bot hands work to another:
    curl -s -X POST http://127.0.0.1:8787/api/events \

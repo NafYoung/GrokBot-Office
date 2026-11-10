@@ -347,6 +347,7 @@ function drawAgentBody(ctx, a, t, env) {
   }
 
   const dark = shade(color, 0.7);
+  const stretch = a.ambient === 'stretch' && !a.moving;
   if (!seated) {
     const sx = a.fx * swing * 0.07, sy = a.fy * swing * 0.07;
     box(ctx, a.x - 0.14 + sx, a.y - 0.06 + sy, bob, 0.11, 0.11, 0.24, dark);
@@ -354,8 +355,9 @@ function drawAgentBody(ctx, a, t, env) {
   }
   const z0 = 0.22 + bob + lift;
   box(ctx, a.x - 0.14, a.y - 0.11, z0, 0.28, 0.22, 0.32, color);
-  box(ctx, a.x - 0.2, a.y - 0.07, z0 + 0.08, 0.06, 0.13, 0.22, dark);
-  box(ctx, a.x + 0.14, a.y - 0.07, z0 + 0.08, 0.06, 0.13, 0.22, dark);
+  const armZ = z0 + (stretch ? 0.3 : 0.08);
+  box(ctx, a.x - 0.2 - (stretch ? 0.02 : 0), a.y - 0.07, armZ, 0.06, 0.13, stretch ? 0.16 : 0.22, dark);
+  box(ctx, a.x + 0.14 + (stretch ? 0.02 : 0), a.y - 0.07, armZ, 0.06, 0.13, stretch ? 0.16 : 0.22, dark);
   const hz = z0 + 0.32;
   box(ctx, a.x - 0.14, a.y - 0.14, hz, 0.28, 0.28, 0.26, shade(color, 1.12));
   const eye = '#0b0f19';
@@ -369,6 +371,11 @@ function drawAgentBody(ctx, a, t, env) {
   if (a.carry) {
     const px = a.x + a.fx * 0.2 - 0.09, py = a.y + a.fy * 0.2 - 0.09;
     box(ctx, px, py, z0 + 0.1, 0.18, 0.18, 0.16, '#c9954f');
+  }
+  if (a.prop === 'cup') {
+    const px = a.x + (a.fx || 0.2) * 0.2, py = a.y + (a.fy || 0) * 0.2;
+    cyl(ctx, px, py, z0 + 0.3, 0.045, 0.07, '#f4efe4', '#fffaf3');
+    cyl(ctx, px, py, z0 + 0.36, 0.04, 0.025, '#6f4e37');
   }
   env.labels.push({ a, wx: a.x, wy: a.y, wz: (hz + 0.3) * AGENT_SCALE + 0.12 });
 }
@@ -389,6 +396,7 @@ function wrapText(ctx, text, maxWidth) {
 }
 
 function bubbleText(a) {
+  if (a.presence === 'fresh' && a.ambientLabel) return a.ambientLabel;
   if (a.presence === 'fresh' && a.text) return a.text;
   if (a.presence === 'fresh' && (a.state === 'needsYou' || a.state === 'error')) return STATES[a.state].label;
   if (a.presence === 'stale' && a.text) return `过期 · ${a.text}`;
@@ -531,8 +539,9 @@ export function createRenderer(canvas, agents) {
       const w = Math.min(164, tw + 16);
       const h = 8 + lines.length * 15;
       const x = sx - w / 2, y = sy - h - 22;
-      ctx.fillStyle = 'rgba(15,23,42,0.94)';
-      ctx.strokeStyle = a.presence === 'fresh' ? 'rgba(148,163,184,0.45)' : 'rgba(100,116,139,0.5)';
+      const loaf = Boolean(a.ambientLabel);
+      ctx.fillStyle = loaf ? 'rgba(63,42,18,0.94)' : 'rgba(15,23,42,0.94)';
+      ctx.strokeStyle = loaf ? 'rgba(251,191,36,0.7)' : (a.presence === 'fresh' ? 'rgba(148,163,184,0.45)' : 'rgba(100,116,139,0.5)');
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke();
       ctx.beginPath();
@@ -541,7 +550,7 @@ export function createRenderer(canvas, agents) {
       ctx.lineTo(sx + 5, y + h);
       ctx.closePath();
       ctx.fill();
-      ctx.fillStyle = a.presence === 'fresh' ? '#f8fafc' : '#cbd5e1';
+      ctx.fillStyle = loaf ? '#fde68a' : (a.presence === 'fresh' ? '#f8fafc' : '#cbd5e1');
       ctx.textAlign = 'left';
       lines.forEach((ln, i) => ctx.fillText(ln, x + 8, y + 11 + i * 15));
     }

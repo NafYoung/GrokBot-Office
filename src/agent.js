@@ -42,6 +42,10 @@ export class Agent {
     this.seated = true;
     this.moving = false;
     this.carry = false;
+    this.prop = null;
+    this.ambient = null;
+    this.ambientLabel = '';
+    this.loafIn = null;
     this.lastTask = null;
     this.speed = 2.1;
     this.path = [];
@@ -62,6 +66,9 @@ export class Agent {
     this.seated = true;
     this.moving = false;
     this.carry = false;
+    this.prop = null;
+    this.ambient = null;
+    this.ambientLabel = '';
     this.path = [];
     this.script = [];
     this.cur = null;
@@ -76,14 +83,22 @@ export class Agent {
     this.presence = this.cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
     this.demoActive = false;
     this.lastTask = null;
+    this.loafIn = null;
+  }
+
+  clearPose() {
+    this.carry = false;
+    this.prop = null;
+    this.ambient = null;
+    this.ambientLabel = '';
   }
 
   interrupt(script) {
     this.script = script;
     this.cur = null;
     this.path = [];
-    this.carry = false;
     this.moving = false;
+    this.clearPose();
   }
 
   get cell() { return [Math.floor(this.x), Math.floor(this.y)]; }
@@ -119,6 +134,11 @@ export class Agent {
         this.fx = 0; this.fy = -1;
         break;
       case 'carry': this.carry = a.on; break;
+      case 'mark':
+        this.ambient = a.ambient ?? null;
+        this.ambientLabel = a.label || '';
+        this.prop = a.prop ?? null;
+        break;
       case 'call': a.fn(this); break;
       case 'snap': this.snapToSeat(); break;
     }

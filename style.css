@@ -107,6 +107,7 @@ button { font: inherit; }
 .selected-card .sel-head b { display: block; }
 .sel-state { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
 .sel-text { color: #e2e8f0; line-height: 1.45; margin-bottom: 6px; }
+.sel-loaf { color: #fde68a; margin-bottom: 6px; }
 .sel-note { font-size: 12px; }
 
 #activity { overflow: auto; min-height: 0; }

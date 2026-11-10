@@ -116,8 +116,14 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
     if (b) select(b.dataset.id);
   });
 
+  function caption(a) {
+    const base = statusCaption({ presence: a.presence, state: a.state, STATES, PRESENCE, kind: a.cfg.kind });
+    if (a.presence === 'fresh' && a.ambientLabel) return `摸鱼 · ${a.ambientLabel}`;
+    return base;
+  }
+
   function row(a, nowSec) {
-    const cap = statusCaption({ presence: a.presence, state: a.state, STATES, PRESENCE, kind: a.cfg.kind });
+    const cap = caption(a);
     const p = PRESENCE[a.presence] || PRESENCE.unknown;
     const age = formatAge(a.lastSeenTs, nowSec);
     const work = a.text ? esc(a.text) : (a.presence === 'unconnected' ? '未连接' : '尚无工作内容');
@@ -136,7 +142,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       box.innerHTML = '<p class="hint">点小人、工位或名单，查看工作内容与新鲜度。</p>';
       return;
     }
-    const cap = statusCaption({ presence: a.presence, state: a.state, STATES, PRESENCE, kind: a.cfg.kind });
+    const cap = caption(a);
     const p = PRESENCE[a.presence] || PRESENCE.unknown;
     box.innerHTML = `
       <div class="sel-head">
@@ -148,13 +154,14 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       </div>
       <p class="sel-state"><i class="dot" style="background:${p.color}"></i>${esc(cap)} · ${esc(formatAge(a.lastSeenTs, nowSec))}</p>
       <p class="sel-text">${esc(a.text || '没有最近工作描述')}</p>
+      ${a.ambientLabel ? `<p class="sel-loaf">摸鱼：${esc(a.ambientLabel)}</p>` : ''}
       <p class="muted sel-note">${esc(contactNote(a))}</p>`;
   }
 
   function update(nowSec = Date.now() / 1000) {
     const sig = [
       uiMode, feed, selectedId,
-      ...agents.map((a) => `${a.id}:${a.presence}:${a.state}:${a.text}:${formatAge(a.lastSeenTs, nowSec)}`),
+      ...agents.map((a) => `${a.id}:${a.presence}:${a.state}:${a.text}:${a.ambientLabel}:${formatAge(a.lastSeenTs, nowSec)}`),
     ].join('|');
     if (sig === lastSig) return;
     lastSig = sig;
@@ -162,12 +169,14 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
     const n = (pred) => agents.filter(pred).length;
     const working = n((a) => a.presence === 'fresh' && WORKING_STATES.includes(a.state) && a.state !== 'needsYou');
     const need = n((a) => a.presence === 'fresh' && a.state === 'needsYou');
+    const loafing = n((a) => a.presence === 'fresh' && a.state === 'idle');
     const stale = n((a) => a.presence === 'stale');
     const unknown = n((a) => a.presence === 'unknown' || a.presence === 'unconnected');
     const offline = n((a) => a.presence === 'offline');
     const stat = (color, v, label) => `<span class="stat"><i class="dot" style="background:${color}"></i>${v} ${label}</span>`;
     $('stats').innerHTML =
       stat('#8b7cf6', working, '工作中') +
+      stat('#38bdf8', loafing, '空闲') +
       stat('#fb923c', need, '需要你') +
       stat('#facc15', stale, '过期') +
       stat('#64748b', unknown, '未知/未连接') +

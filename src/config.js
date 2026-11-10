@@ -239,5 +239,8 @@ export const WALLS = [
 
 export const GATHER = [[5, 1], [6, 1], [8, 1], [5, 2], [6, 2], [7, 2], [8, 2]];
 export const LOUNGE = [[5, 9], [7, 9], [4, 9], [8, 9]];
+// 空闲时的去处。只有「实时 + 空闲」才会走过去，不代表有新任务。
+export const COFFEE = [[1, 2], [1, 5], [3, 5]];
+export const STRETCH = [[4, 7], [6, 7], [8, 7], [11, 6]];
 
 export const FONT = '"WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif';

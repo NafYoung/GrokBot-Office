@@ -1,5 +1,6 @@
 // 演示模式才随机排任务。真实模式只走 applyEvent()。
-import { CONVENE_ID, GATHER, LOUNGE, STATES } from './config.js';
+import { CONVENE_ID, GATHER, STATES } from './config.js';
+import { AmbientLife, LOAF, LOAF_SPOTS, loafScript } from './ambient.js';
 
 export const SYNC = {
   lead: '主持全员同步',
@@ -19,6 +20,7 @@ export class Simulation {
     this.onLog = onLog;
     this.running = false;
     this.syncIn = 14;
+    this.ambient = new AmbientLife({ agents, rand });
   }
 
   range(a, b) { return a + this.rand() * (b - a); }
@@ -60,7 +62,10 @@ export class Simulation {
   }
 
   update(dt, nowSec = Date.now() / 1000) {
-    if (!this.running) return;
+    if (!this.running) {
+      this.ambient.update(dt);
+      return;
+    }
     this.syncIn -= dt;
     if (this.syncIn <= 0) {
       this.runSync({ demo: true });
@@ -78,6 +83,7 @@ export class Simulation {
     const task = this.pick(pool.length ? pool : tasks);
     a.lastTask = task;
     const s = [
+      { type: 'mark', ambient: null, label: '', prop: null },
       { type: 'goto', cell: a.seat },
       { type: 'sit' },
       { type: 'set', state: task.state, text: task.text },
@@ -124,12 +130,13 @@ export class Simulation {
   }
 
   breakTime(a) {
-    const spot = this.pick(LOUNGE);
+    const kind = this.pick(Object.keys(LOAF));
+    const spot = this.pick(LOAF_SPOTS[kind]);
+    const text = `【演示】${LOAF[kind].go}`;
     return [
-      { type: 'set', state: 'idle', text: '【演示】去休息区走走' },
-      { type: 'goto', cell: spot },
-      { type: 'wait', t: this.range(4, 7) },
-      { type: 'goto', cell: a.seat },
+      { type: 'set', state: 'idle', text },
+      { type: 'call', fn: () => this.log(a, text) },
+      ...loafScript(a, kind, spot, this.range(3, 5)),
     ];
   }
 
@@ -185,6 +192,17 @@ export class Simulation {
       if (!STATES[ev.state]) return false;
       const text = ev.text || STATES[ev.state].label;
       a.lastStatusTs = ts;
+      if (!immediate && ev.state === 'idle' && a.state === 'idle') {
+        const busy = Boolean(a.ambient || a.cur || a.script.length);
+        const away = a.cell[0] !== a.seat[0] || a.cell[1] !== a.seat[1];
+        if (busy || !away) {
+          if (text && text !== a.text) {
+            a.text = text;
+            if (!busy) this.log(a, text, { demo: false });
+          }
+          return true;
+        }
+      }
       if (immediate) {
         a.interrupt([]);
         a.snapToSeat();
