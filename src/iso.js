@@ -14,8 +14,15 @@ export const rgb = (r, g, b, a = 1) =>
   a === 1 ? `rgb(${r | 0},${g | 0},${b | 0})` : `rgba(${r | 0},${g | 0},${b | 0},${a})`;
 export const hexToRgb = hex;
 
-const toHex = (r, g, b) =>
+export const toHex = (r, g, b) =>
   '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('');
+
+// 把颜色往灰里收一收：未知 / 过期 / 离线的小人用，避免看起来还在干活
+export function muteHex(c, t = 0.55) {
+  const [r, g, b] = hex(c);
+  const m = (r + g + b) / 3;
+  return toHex(r + (m - r) * t, g + (m - g) * t, b + (m - b) * t);
+}
 
 // f<1 变暗,f>1 向白色提亮。返回 #rrggbb(必须是十六进制:box() 会对结果再次 shade,
 // 之前返回 rgb(...) 字符串导致二次解析成 NaN,颜色变黑)
@@ -101,7 +108,7 @@ export function planeText(ctx, plane, text, u, v, size, color, align = 'left') {
   ctx.save();
   planeTransform(ctx, plane);
   ctx.scale(0.01, 0.01); // 字号用大数,避免浏览器对极小字号的处理
-  ctx.font = `700 ${size * 100}px "Helvetica Neue", Arial, sans-serif`;
+  ctx.font = `700 ${size * 100}px "WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif`;
   ctx.fillStyle = color;
   ctx.textAlign = align;
   ctx.textBaseline = 'middle';

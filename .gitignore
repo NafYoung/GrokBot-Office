@@ -7,3 +7,5 @@ server.log
 __pycache__/
 node_modules/
 .DS_Store
+data/office-state.json
+data/*.tmp

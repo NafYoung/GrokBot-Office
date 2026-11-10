@@ -1,12 +1,16 @@
-// 模拟器:决定每个 agent 下一步干什么,并把"发生了什么"写进活动日志。
-// 它和真实数据的接口是同一个:往 agent 的 script 里塞动作。
-//   - 模拟模式:plan() 随机生成
-//   - 真实模式:applyEvent() 接收服务器转发来的事件,见文件末尾
-import { GATHER, LOUNGE, STATES } from './config.js';
+// 演示模式才随机排任务。真实模式只走 applyEvent()。
+import { CONVENE_ID, GATHER, LOUNGE, STATES } from './config.js';
+
+export const SYNC = {
+  lead: '主持全员同步',
+  go: '前往全员同步',
+  here: '参加全员同步',
+  log: '召集全员到前台开会',
+};
 
 export class Simulation {
   /**
-   * @param {{agents: import('./agent.js').Agent[], rand?: () => number, onLog?: (e:{agent:object,text:string}) => void}} opts
+   * @param {{agents: import('./agent.js').Agent[], rand?: () => number, onLog?: Function}} opts
    */
   constructor({ agents, rand = Math.random, onLog = () => {} }) {
     this.agents = agents;
@@ -14,84 +18,101 @@ export class Simulation {
     this.rand = rand;
     this.onLog = onLog;
     this.running = false;
-    this.syncIn = 14; // 第一次全员会议在 14 秒后,让你很快看到效果
+    this.syncIn = 14;
   }
 
   range(a, b) { return a + this.rand() * (b - a); }
   pick(list) { return list[Math.floor(this.rand() * list.length)]; }
-  log(agent, text) { this.onLog({ agent, text }); }
+  log(agent, text, extra = {}) { this.onLog({ agent, text, demo: this.running, ...extra }); }
 
-  start() { this.running = true; }
-
-  // 停止:所有人回到工位,状态置 Idle
-  stop(text = 'Simulation stopped') {
-    this.running = false;
+  start() {
+    this.running = true;
+    const now = Date.now() / 1000;
     for (const a of this.agents) {
-      a.interrupt([
-        { type: 'goto', cell: a.seat },
-        { type: 'sit' },
-        { type: 'set', state: 'idle', text },
-      ]);
+      if (a.cfg.kind === 'on_demand') continue;
+      a.demoActive = true;
+      a.lastSeenTs = now;
+      a.presence = 'fresh';
     }
   }
 
-  // 按 id 或名字(不分大小写)找人:'atlas'、'Atlas'、'drone business' 都行
-  find(ref) {
-    const k = String(ref ?? '').trim().toLowerCase();
-    return this.agents.find((a) => a.id === k || a.name.toLowerCase() === k) || null;
+  stop() {
+    this.running = false;
+    this.syncIn = 14;
+    for (const a of this.agents) a.resetUnknown();
   }
 
-  update(dt) {
+  find(ref) {
+    const k = String(ref ?? '').trim().toLowerCase();
+    if (!k) return null;
+    return this.agents.find((a) => {
+      if (a.id === k || a.name.toLowerCase() === k) return true;
+      return (a.cfg.aliases || []).some((al) => al.toLowerCase() === k);
+    }) || null;
+  }
+
+  convene() {
+    return this.byId[CONVENE_ID] || this.agents.find((a) => a.cfg.kind === 'resident') || this.agents[0];
+  }
+
+  demoCast() {
+    return this.agents.filter((a) => a.cfg.kind === 'resident' || a.cfg.kind === 'auxiliary');
+  }
+
+  update(dt, nowSec = Date.now() / 1000) {
     if (!this.running) return;
     this.syncIn -= dt;
     if (this.syncIn <= 0) {
-      this.runSync();
+      this.runSync({ demo: true });
       this.syncIn = this.range(35, 55);
     }
-    for (const a of this.agents) {
-      if (!a.cur && a.script.length === 0) a.script = this.plan(a);
+    for (const a of this.demoCast()) {
+      if (!a.cur && a.script.length === 0) a.script = this.plan(a, nowSec);
     }
   }
 
-  // 一个"工作周期":回工位 → 开始任务 → 干一会儿 → 随机插入一件事
-  plan(a) {
-    // 尽量不连着两次做同一件事,活动日志就不会出现重复行
-    const pool = a.cfg.tasks.filter((t) => t !== a.lastTask);
-    const task = this.pick(pool.length ? pool : a.cfg.tasks);
+  plan(a, nowSec = Date.now() / 1000) {
+    const tasks = a.cfg.demo?.tasks || [];
+    if (!tasks.length) return [{ type: 'wait', t: this.range(6, 12) }];
+    const pool = tasks.filter((t) => t !== a.lastTask);
+    const task = this.pick(pool.length ? pool : tasks);
     a.lastTask = task;
     const s = [
       { type: 'goto', cell: a.seat },
       { type: 'sit' },
       { type: 'set', state: task.state, text: task.text },
-      { type: 'call', fn: () => this.log(a, `At the desk. ${task.text}`) },
+      { type: 'call', fn: () => { a.lastSeenTs = Date.now() / 1000; this.log(a, task.text); } },
       { type: 'wait', t: this.range(6, 12) },
     ];
     const roll = this.rand();
+    const hands = a.cfg.demo?.handoffs || [];
     if (roll < 0.06) {
       s.push(
-        { type: 'set', state: 'needsYou', text: 'Waiting for your approval' },
-        { type: 'call', fn: () => this.log(a, 'Needs your approval to continue') },
+        { type: 'set', state: 'needsYou', text: '【演示】等你拍板才能继续' },
+        { type: 'call', fn: () => this.log(a, '【演示】需要你批准') },
         { type: 'wait', t: 6 },
       );
     } else if (roll < 0.09) {
       s.push(
-        { type: 'set', state: 'error', text: 'Task failed, retrying' },
-        { type: 'call', fn: () => this.log(a, 'Hit an error and is retrying') },
+        { type: 'set', state: 'error', text: '【演示】任务失败，正在重试' },
+        { type: 'call', fn: () => this.log(a, '【演示】出错后重试') },
         { type: 'wait', t: 4 },
       );
-    } else if (roll < 0.55) {
+    } else if (roll < 0.55 && hands.length) {
       s.push(...this.handoff(a));
     } else if (roll < 0.65) {
       s.push(...this.breakTime(a));
     }
+    void nowSec;
     return s;
   }
 
   handoff(a) {
-    const h = this.pick(a.cfg.handoffs);
+    const h = this.pick(a.cfg.demo.handoffs);
     const target = this.byId[h.to];
+    if (!target) return [];
     return [
-      { type: 'set', state: 'thinking', text: `Heading to ${target.name}'s desk` },
+      { type: 'set', state: 'thinking', text: `【演示】去 ${target.name} 工位` },
       { type: 'carry', on: true },
       { type: 'goto', cell: target.visit },
       { type: 'set', state: 'thinking', text: h.text },
@@ -105,66 +126,77 @@ export class Simulation {
   breakTime(a) {
     const spot = this.pick(LOUNGE);
     return [
-      { type: 'set', state: 'idle', text: 'Taking a short break' },
+      { type: 'set', state: 'idle', text: '【演示】去休息区走走' },
       { type: 'goto', cell: spot },
       { type: 'wait', t: this.range(4, 7) },
       { type: 'goto', cell: a.seat },
     ];
   }
 
-  // Alfred 召集全员:大家走进他的办公室,开完会各回各位
-  runSync() {
-    const alfred = this.byId.alfred;
+  runSync({ demo = false } = {}) {
+    const lead = this.convene();
+    if (!lead) return false;
     const dur = 10;
-    // 散会后恢复开会前的状态:真实模式下没人替他们重新安排任务
-    const prev = new Map(this.agents.map((a) => [a, { state: a.state, text: a.text }]));
+    const others = demo
+      ? this.agents.filter((a) => a !== lead && a.cfg.kind === 'resident')
+      : this.agents.filter((a) => a !== lead && a.cfg.kind !== 'on_demand' && a.lastSeenTs);
+
+    const prev = new Map([lead, ...others].map((a) => [a, { state: a.state, text: a.text }]));
     const restore = (a) => ({ type: 'set', ...prev.get(a) });
-    alfred.interrupt([
-      // 先亮状态再走回座位:他可能正在给别人送东西,被打断时离座位还有几步
-      { type: 'set', state: 'thinking', text: 'Running the team sync' },
-      { type: 'call', fn: () => this.log(alfred, 'Called a team sync in the executive office') },
-      { type: 'goto', cell: alfred.seat },
+
+    lead.interrupt([
+      { type: 'set', state: 'thinking', text: SYNC.lead },
+      { type: 'call', fn: () => this.log(lead, SYNC.log) },
+      { type: 'goto', cell: lead.seat },
       { type: 'sit' },
-      // 别人要先走过来(最远约 7 秒)再开 dur 秒会,Alfred 要等到最后一个人坐下
       { type: 'wait', t: dur + 9 },
-      restore(alfred),
+      restore(lead),
     ]);
-    const others = this.agents.filter((a) => a !== alfred);
     others.forEach((a, i) => {
       a.interrupt([
-        { type: 'set', state: 'thinking', text: 'Heading to the team sync' },
+        { type: 'set', state: 'thinking', text: SYNC.go },
         { type: 'goto', cell: GATHER[i % GATHER.length] },
-        { type: 'set', state: 'thinking', text: 'In the team sync with Alfred' },
+        { type: 'set', state: 'thinking', text: SYNC.here },
         { type: 'wait', t: dur },
         { type: 'goto', cell: a.seat },
         { type: 'sit' },
         restore(a),
       ]);
     });
+    return true;
   }
 
-  // ---- 真实数据入口 ----
-  // 先 sim.stop() 再调用,否则模拟器会在这个动作做完后继续随机安排。
-  // 三种事件(和 server.py 校验后转发的格式一致):
-  //   {type:'status',  agent, state, text}        回工位,显示状态
-  //   {type:'handoff', agent, to, text, state?}   走到对方工位交接,再回来、恢复原状态
-  //   {type:'sync'}                               Alfred 召集全员开会
-  // 返回 false 表示事件无效(没人 / 状态不认识),什么都不会发生。
-  applyEvent(ev) {
+  // immediate: 刷新页面恢复快照时直接坐回工位，不要集体走一遍路
+  applyEvent(ev, { immediate = false } = {}) {
     const type = ev.type || 'status';
-    if (type === 'sync') { this.runSync(); return true; }
+    const ts = Number(ev.seen || ev.ts) || (Date.now() / 1000);
+
+    if (type === 'sync') {
+      if (immediate) return true;
+      return this.runSync({ demo: false });
+    }
 
     const a = this.find(ev.agent);
     if (!a) return false;
+    a.lastSeenTs = ts;
+    a.demoActive = false;
 
     if (type === 'status') {
       if (!STATES[ev.state]) return false;
       const text = ev.text || STATES[ev.state].label;
+      a.lastStatusTs = ts;
+      if (immediate) {
+        a.interrupt([]);
+        a.snapToSeat();
+        a.state = ev.state;
+        a.text = text;
+        return true;
+      }
       a.interrupt([
         { type: 'goto', cell: a.seat },
         { type: 'sit' },
         { type: 'set', state: ev.state, text },
-        { type: 'call', fn: () => this.log(a, text) },
+        { type: 'call', fn: () => this.log(a, text, { demo: false }) },
       ]);
       return true;
     }
@@ -173,14 +205,18 @@ export class Simulation {
       const target = this.find(ev.to);
       if (!target || target === a) return false;
       const state = STATES[ev.state] ? ev.state : 'thinking';
-      const text = ev.text || `Handed something to ${target.name}`;
+      const text = ev.text || `把材料交给 ${target.name}`;
+      if (immediate) {
+        a.snapToSeat();
+        return true;
+      }
       const prev = { state: a.state, text: a.text };
       a.interrupt([
-        { type: 'set', state, text: `Heading to ${target.name}'s desk` },
+        { type: 'set', state, text: `去 ${target.name} 工位` },
         { type: 'carry', on: true },
         { type: 'goto', cell: target.visit },
         { type: 'set', state, text },
-        { type: 'call', fn: () => this.log(a, text) },
+        { type: 'call', fn: () => this.log(a, text, { demo: false }) },
         { type: 'wait', t: 2.2 },
         { type: 'carry', on: false },
         { type: 'goto', cell: a.seat },

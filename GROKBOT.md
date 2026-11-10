@@ -1,80 +1,95 @@
-# Connect your Grok Bot to the Virtual Office
+# 把 Grok Bot 接到办公室
 
-> 把下面 "Prompt for Grok Bot" 整段发给 Grok Bot 即可。前提:Grok Bot 能在**这台 Mac 上**执行 shell 命令(`curl`),
-> 并且办公室服务器在运行:`cd grokbot-office && python3 server.py`。
+前提：这台机器上能跑 `curl`，并且办公室已启动：
+
+```bash
+python3 server.py --host 0.0.0.0 --port 8787
+```
+
+口令用环境变量，不要写进这份提示词、不要写进 `text`：
+
+```bash
+export OFFICE_TOKEN="$(cat ~/.config/grokbot-office/token)"
+```
 
 ## 它是怎么连的
 
 ```
-Grok Bot --curl POST--> http://127.0.0.1:8787/api/events --校验--> 浏览器里的办公室
+Bot --curl POST /api/events--> 本服务器（校验）--SSE--> 浏览器里的办公室
 ```
 
-- 服务器只监听 `127.0.0.1`,只有本机进程能发事件。
-- 第一条真实事件到达时,页面自动从 Simulation 切到 **Live**,随机模拟停止。
-- 想加口令:启动前 `export OFFICE_TOKEN=xxxx`,然后请求要带 `-H "Authorization: Bearer xxxx"`。口令不要写进聊天记录或代码里。
+- 字段名是 **`agent`**（不是 bot / name）。
+- 第一条真实事件不会自动打开演示；页面默认就是实时模式。
+- 没发事件的工位会显示未知或未连接，不要靠随机走动假装在干活。
+- 设了 `OFFICE_TOKEN` 时，POST 必须带 `Authorization: Bearer <token>`。
 
 ## Prompt for Grok Bot
 
 ```text
-I run a live "virtual office" that shows what each of my bots is doing. Please report your work to it.
+I run a live virtual office that shows what each of my bots is doing. Report work to it.
 
-Server: http://127.0.0.1:8787  (runs on this Mac; use curl)
+Server: http://127.0.0.1:8787  (use curl; if OFFICE_TOKEN is set, send Authorization: Bearer <token>)
 
-1. First, discover the valid bot ids and states:
+1. Discover valid bot ids and states:
    curl -s http://127.0.0.1:8787/api/agents
 
-2. Whenever a bot starts or changes what it is doing, send a status event:
+2. When a bot starts or changes work, send a status event. The field is called "agent":
    curl -s -X POST http://127.0.0.1:8787/api/events \
      -H 'Content-Type: application/json' \
-     -d '{"agent":"atlas","state":"coding","text":"Drafting meeting invites"}'
+     -d '{"agent":"grok","state":"coding","text":"分派下一条请求"}'
 
    state is one of: coding, browsing, terminal, thinking, needsYou, error, idle
-   - coding    writing or editing code/documents
+   - coding    writing or editing
    - browsing  reading the web or searching
    - terminal  running commands
    - thinking  planning, waiting on a model
-   - needsYou  blocked until the human approves or answers   (shows an orange alert)
-   - error     the task failed                                (shows a red alert)
-   - idle      nothing to do
+   - needsYou  blocked on the human
+   - error     the task failed
+   - idle      nothing to do (send this occasionally if you want to stay "fresh")
 
-3. When one bot hands work to another bot, send a handoff (the bot physically walks to the other's desk):
+3. When one bot hands work to another:
    curl -s -X POST http://127.0.0.1:8787/api/events \
      -H 'Content-Type: application/json' \
-     -d '{"type":"handoff","agent":"fetch","to":"claim","text":"Dropped off a parcel for Claim"}'
+     -d '{"type":"handoff","agent":"zhuxian","to":"ziliao","text":"把资料任务交给资料员"}'
 
-4. When all bots are coordinated together (a team meeting), send:
-   curl -s -X POST http://127.0.0.1:8787/api/events -H 'Content-Type: application/json' -d '{"type":"sync"}'
+4. Team meeting:
+   curl -s -X POST http://127.0.0.1:8787/api/events \
+     -H 'Content-Type: application/json' \
+     -d '{"type":"sync"}'
 
 Rules:
-- "text" is a short plain-English description, max 200 characters.
-- NEVER put secrets, tokens, passwords, file contents or private personal data in "text". It is shown on screen.
-- The server answers 202 on success. On 422 it tells you the valid ids/states; fix the event, do not retry in a loop.
+- "text" is a short plain description, max 200 characters. Chinese is fine.
+- NEVER put secrets, tokens, passwords, file contents or private personal data in "text".
+- The server answers 202 on success. On 422 it lists valid ids/states; fix the event, do not retry in a loop.
 - Do not send more than about one event per bot every few seconds.
-- If the server is not reachable, tell me once and carry on with your normal work.
+- If the server is not reachable, tell me once and carry on.
+- Do not invent activity. If you are not doing work, send idle or send nothing (the office will show stale/offline).
 ```
 
-## 事件格式参考
+## 事件格式
 
-| type | 必填字段 | 可选 | 画面效果 |
+| type | 必填 | 可选 | 画面 |
 |---|---|---|---|
-| `status`(默认) | `agent`, `state` | `text` | 该 bot 回工位、显示状态和文案 |
-| `handoff` | `agent`, `to` | `text`, `state` | 带包裹走到对方工位,交接后回来,状态恢复原样 |
-| `sync` | 无 | 无 | Alfred 召集全员进办公室开会,散会后恢复各自状态 |
+| `status`（默认） | `agent`, `state` | `text` | 回工位、显示状态和文案 |
+| `handoff` | `agent`, `to` | `text`, `state` | 走到对方工位交接再回来 |
+| `sync` | 无 | 无 | Grok Bot 召集全员到前台开会 |
 
-`agent` 可以写 id(`atlas`)或显示名(`Drone Business`),不分大小写。有哪些 bot 由 `src/config.js` 的 `AGENTS` 决定,
-**如果你真实的 bot 名字和这 8 个不同,改 `AGENTS`(和 `DESKS`)就行**,服务器会自动读取新名单。
+`agent` 可以写 id（`grok`）或显示名（`Grok Bot` / `主线学习总管`），不分大小写。
+JD调研 会进 `diaoyan`（调研简报）。`python-roadmap`、论文证据核对员已撤席，会 422。
 
-## 自己试一下(不需要 Grok Bot)
+当前主工位：`grok` `newbee` `guan` `diaoyan` `zhuxian` `zhishiku` `mianshi` `qiwen`。
+按需助手：`ziliao` `shiyan` `yanshou`。按需工具：`eggbot`。
+
+名单只来自 `src/config.js`。改完重启 `server.py`。
+
+## 自己试
 
 ```bash
-python3 server.py                      # 终端 1
-open http://127.0.0.1:8787             # 浏览器
+python3 server.py --host 0.0.0.0 --port 8787
+# 浏览器打开 http://127.0.0.1:8787/
 curl -s -X POST http://127.0.0.1:8787/api/events \
   -H 'Content-Type: application/json' \
-  -d '{"agent":"atlas","state":"needsYou","text":"Approve the budget?"}'
+  -d '{"agent":"grok","state":"needsYou","text":"请确认下一步学习块"}'
 ```
 
-## 如果 Grok Bot 其实跑在云端
-
-云端的 Bot 访问不到你电脑上的 `127.0.0.1`。那就需要把本机端口暴露出去(例如 Cloudflare Tunnel),
-**并且必须设置 `OFFICE_TOKEN`**,否则互联网上任何人都能往你的办公室发事件。需要时再做,先别开放。
+云端 Bot 够不到你的 `127.0.0.1`。需要对外暴露时务必设 `OFFICE_TOKEN`。本仓库不负责装隧道。

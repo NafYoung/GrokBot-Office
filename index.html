@@ -1,49 +1,61 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Staff Virtual Office</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0a1020" />
+  <title>YOUNG NAF 的 Bot 办公室</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <div class="app">
+    <div id="demoBanner" class="demo-banner hidden" role="status">演示模式 · 以下是示例数据，不是实时状态</div>
     <main class="stage">
       <header class="topbar">
         <div class="brand">
-          <span class="logo"></span>
-          <b id="title"></b>
-          <span class="badge" id="modeBadge">Simulation</span>
+          <span class="logo" aria-hidden="true"></span>
+          <b id="title">YOUNG NAF 的 Bot 办公室</b>
+          <span class="badge" id="modeBadge">等待事件</span>
         </div>
         <div class="stats" id="stats"></div>
+        <p class="feed-banner" id="feedBanner">正在连接事件流…</p>
       </header>
 
-      <canvas id="office"></canvas>
+      <canvas id="office" aria-label="等距办公室"></canvas>
+
+      <div class="roster-strip" id="strip"></div>
 
       <div class="legend" id="legend"></div>
 
       <div class="tod" id="tod">
-        <button data-mode="now" class="on">Now</button>
-        <button data-mode="day">Day</button>
-        <button data-mode="evening">Evening</button>
-        <button data-mode="night">Night</button>
+        <button type="button" data-mode="now" class="on">此刻</button>
+        <button type="button" data-mode="day">白天</button>
+        <button type="button" data-mode="evening">黄昏</button>
+        <button type="button" data-mode="night">夜里</button>
       </div>
 
-      <button class="sim" id="simBtn">Stop Simulation</button>
+      <button type="button" class="sim" id="demoBtn">进入演示模式</button>
     </main>
 
     <aside class="side">
       <div class="owner">
-        <span class="avatar" id="ownerAvatar"></span>
-        <b id="ownerName"></b>
-        <span class="badge" id="ownerBadge">Simulation</span>
+        <span class="avatar" id="ownerAvatar">N</span>
+        <b id="ownerName">YOUNG NAF</b>
+        <span class="badge" id="ownerBadge">等待事件</span>
       </div>
+      <section class="card selected-card" id="selected">
+        <p class="hint">点小人、工位或名单，查看工作内容与新鲜度。</p>
+      </section>
       <section class="card">
-        <h3>Team <span id="teamCount"></span></h3>
+        <h3>主工位 <span id="teamCount">8</span></h3>
         <ul id="team"></ul>
       </section>
+      <section class="card">
+        <h3>按需助手 / 工具</h3>
+        <ul id="aux"></ul>
+      </section>
       <section class="card grow">
-        <h3>Activity <span class="muted" id="actMode">Simulated</span></h3>
+        <h3>最近活动 <span class="muted" id="actMode">实时</span></h3>
         <ul id="activity"></ul>
       </section>
     </aside>

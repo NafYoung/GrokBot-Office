@@ -1,14 +1,14 @@
-// 渲染器:把 world + agents 画到 canvas。只读状态,不改状态。
-// 画面分层:  背景(墙/窗/地板/地毯) → 按深度排序的物体(家具+小人) → 光照色调 → 夜间发光 → 名字标签
-import { GRID, DESKS, RUGS, WALLS, STATES } from './config.js';
+// 渲染器：把 world + agents 画到 canvas。只读状态，不改状态。
+import { GRID, DESKS, RUGS, WALLS, STATES, PRESENCE, FONT, OFFICE } from './config.js';
+import { shouldShowOnFloor } from './presence.js';
 import {
   TW, TH, ZU, P, box, cyl, blob, quad3, poly, ellipseFloor, shade, rgb, hexToRgb,
-  planeText, planeTransform,
+  planeText, planeTransform, muteHex,
 } from './iso.js';
 
 const W = GRID.w, D = GRID.d, WALL_H = 3.3, FLOOR_T = 0.3;
+const WORKING = new Set(['coding', 'browsing', 'terminal', 'thinking', 'error', 'needsYou']);
 
-// ---------- 光照 ----------
 const LIGHTS = {
   day:     { tint: [255, 255, 255, 0],  skyTop: [90, 169, 230], skyBot: [207, 233, 251], night: 0 },
   evening: { tint: [255, 105, 40, 0.22], skyTop: [59, 58, 122],  skyBot: [255, 154, 90],  night: 0.3 },
@@ -23,7 +23,6 @@ export function lightKey(mode, date = new Date()) {
 
 export const makeLight = (key) => structuredClone(LIGHTS[key]);
 
-// 每帧朝目标靠近一点,切换时间段就有渐变
 export function lerpLight(cur, key, k) {
   const tgt = LIGHTS[key];
   const mix = (a, b) => a + (b - a) * k;
@@ -33,7 +32,6 @@ export function lerpLight(cur, key, k) {
   cur.night = mix(cur.night, tgt.night);
 }
 
-// ---------- 静态数据 ----------
 const rand01 = (() => { let s = 7; return () => ((s = (s * 16807) % 2147483647) / 2147483647); })();
 const SKYLINE = [];
 for (let x = 5; x < 14; ) {
@@ -43,14 +41,11 @@ for (let x = 5; x < 14; ) {
 }
 const WOODS = ['#c98a4b', '#c4813f', '#cf9356', '#bf7a3c'];
 const hash = (x, y) => (((x * 73856093) ^ (y * 19349663)) >>> 0);
-const WORKING = new Set(['coding', 'browsing', 'terminal', 'thinking', 'error', 'needsYou']);
 
-// ---------- 背景 ----------
 function drawFloor(ctx) {
   for (let y = 0; y < D; y++) {
     for (let x = 0; x < W; x++) {
       poly(ctx, [P(x, y), P(x + 1, y), P(x + 1, y + 1), P(x, y + 1)], WOODS[(hash(x, y) >> 3) % 4]);
-      // 木地板的缝
       ctx.strokeStyle = 'rgba(60,30,10,0.16)';
       ctx.lineWidth = 1;
       ctx.beginPath();
@@ -61,7 +56,6 @@ function drawFloor(ctx) {
       ctx.stroke();
     }
   }
-  // 地板侧面厚度
   quad3(ctx, [[0, D, 0], [W, D, 0], [W, D, -FLOOR_T], [0, D, -FLOOR_T]], '#4a3424');
   quad3(ctx, [[W, 0, 0], [W, D, 0], [W, D, -FLOOR_T], [W, 0, -FLOOR_T]], '#34261b');
 }
@@ -77,28 +71,25 @@ function drawRugs(ctx) {
     ctx.restore();
     planeText(ctx, 'floor', r.label, r.x0 + 0.22, r.y1 - 0.3, 0.2, 'rgba(255,255,255,0.78)');
   }
-  // 休息区绿色圆地毯
   ellipseFloor(ctx, 6.5, 8.95, 0, 2.35, 1.05, '#2f8a4b');
   ellipseFloor(ctx, 6.5, 8.95, 0, 2.15, 0.9, null, 'rgba(255,255,255,0.18)', 2);
+  planeText(ctx, 'floor', '助手席', 4.15, 9.72, 0.18, 'rgba(255,255,255,0.7)');
 }
 
-function drawBackWalls(ctx, L, t) {
+function drawBackWalls(ctx, L) {
   const H = WALL_H;
   quad3(ctx, [[0, 0, 0], [0, D, 0], [0, D, H], [0, 0, H]], '#2b313d');
   quad3(ctx, [[0, 0, 0], [W, 0, 0], [W, 0, H], [0, 0, H]], '#222835');
-  // 墙顶厚度
   quad3(ctx, [[-0.16, 0, H], [0, 0, H], [0, D, H], [-0.16, D, H]], '#404a5c');
   quad3(ctx, [[0, -0.16, H], [W, -0.16, H], [W, 0, H], [0, 0, H]], '#4a5568');
-  // 踢脚线
   quad3(ctx, [[0, 0, 0], [0, D, 0], [0, D, 0.2], [0, 0, 0.2]], '#171b23');
   quad3(ctx, [[0, 0, 0], [W, 0, 0], [W, 0, 0.2], [0, 0, 0.2]], '#12161d');
-
-  drawWindows(ctx, L, t);
+  drawWindows(ctx, L);
   drawRightWallDecor(ctx);
-  drawLeftWallDecor(ctx, t);
+  drawLeftWallDecor(ctx);
 }
 
-function drawWindows(ctx, L, t) {
+function drawWindows(ctx, L) {
   const x0 = 5.0, x1 = 13.9, z0 = 0.35, z1 = WALL_H - 0.22;
   ctx.save();
   planeTransform(ctx, 'right');
@@ -108,7 +99,6 @@ function drawWindows(ctx, L, t) {
   g.addColorStop(1, rgb(...L.skyBot));
   ctx.fillStyle = g;
   ctx.fillRect(x0, z0, x1 - x0, z1 - z0);
-  // 太阳 / 月亮
   const day = 1 - L.night;
   if (day > 0.05) {
     const sg = ctx.createRadialGradient(11.3, 2.3, 0, 11.3, 2.3, 1.1);
@@ -122,7 +112,6 @@ function drawWindows(ctx, L, t) {
     ctx.fillStyle = `rgba(235,240,255,${L.night})`;
     ctx.beginPath(); ctx.arc(7.4, 2.45, 0.2, 0, Math.PI * 2); ctx.fill();
   }
-  // 楼群剪影,夜里亮几扇窗
   for (const b of SKYLINE) {
     ctx.fillStyle = `rgba(${40 + 50 * day},${60 + 60 * day},${95 + 70 * day},0.62)`;
     ctx.fillRect(b.x, z0, b.w, b.h);
@@ -132,7 +121,6 @@ function drawWindows(ctx, L, t) {
     }
   }
   ctx.restore();
-  // 窗框
   ctx.save();
   planeTransform(ctx, 'right');
   ctx.fillStyle = '#10141b';
@@ -143,7 +131,6 @@ function drawWindows(ctx, L, t) {
 }
 
 function drawRightWallDecor(ctx) {
-  // 挂墙显示器:小柱状图
   ctx.save();
   planeTransform(ctx, 'right');
   ctx.fillStyle = '#05080f'; ctx.fillRect(10.1, 1.05, 2.5, 1.35);
@@ -154,7 +141,6 @@ function drawRightWallDecor(ctx) {
     ctx.fillRect(10.3 + i * 0.3, 1.2, 0.18, h * 0.85);
   });
   ctx.restore();
-  // 左段墙面上的小画框
   ctx.save();
   planeTransform(ctx, 'right');
   [[0.9, '#1e3a5f'], [2.0, '#3f2a56'], [3.1, '#27493a']].forEach(([x, c]) => {
@@ -164,40 +150,29 @@ function drawRightWallDecor(ctx) {
   ctx.restore();
 }
 
-function drawLeftWallDecor(ctx, t) {
+function drawLeftWallDecor(ctx) {
   ctx.save();
   planeTransform(ctx, 'left');
-  // 门
   ctx.fillStyle = '#1b130d'; ctx.fillRect(7.45, 0, 1.3, 2.45);
   ctx.fillStyle = '#6b4a2f'; ctx.fillRect(7.55, 0, 1.1, 2.35);
   ctx.fillStyle = '#d6b36a'; ctx.fillRect(8.4, 1.1, 0.07, 0.2);
-  // 时钟
   ctx.fillStyle = '#e8e6df'; ctx.beginPath(); ctx.arc(1.65, 2.5, 0.28, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#222'; ctx.lineWidth = 0.035;
   ctx.beginPath(); ctx.moveTo(1.65, 2.5); ctx.lineTo(1.65, 2.7); ctx.moveTo(1.65, 2.5); ctx.lineTo(1.78, 2.46); ctx.stroke();
-  // 咖啡吧霓虹牌
   ctx.fillStyle = '#0d1016'; ctx.fillRect(2.35, 2.35, 1.9, 0.5);
   ctx.restore();
-  planeText(ctx, 'left', 'COFFEE BAR', 3.3, 2.6, 0.2, '#fbbf24', 'center');
-  // 小搁板
+  planeText(ctx, 'left', '咖啡吧', 3.3, 2.6, 0.2, '#fbbf24', 'center');
   ctx.save();
   planeTransform(ctx, 'left');
   ctx.fillStyle = '#4b3a2e'; ctx.fillRect(2.3, 1.75, 2.0, 0.07);
   ['#e8d8b0', '#c2410c', '#e5e7eb', '#a16207'].forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(2.45 + i * 0.45, 1.82, 0.28, 0.3); });
-  // 数据屏:81.7%
-  ctx.fillStyle = '#04120b'; ctx.fillRect(4.95, 1.35, 1.9, 1.1);
-  ctx.strokeStyle = '#22c55e'; ctx.lineWidth = 0.035; ctx.strokeRect(4.95, 1.35, 1.9, 1.1);
-  ctx.beginPath(); ctx.moveTo(5.1, 1.5);
-  [1.5, 1.62, 1.55, 1.75, 1.7, 1.85, 1.8].forEach((v, i) => ctx.lineTo(5.1 + i * 0.24, v));
-  ctx.stroke();
+  ctx.fillStyle = '#111827'; ctx.fillRect(4.95, 1.35, 1.9, 1.1);
+  ctx.strokeStyle = '#64748b'; ctx.lineWidth = 0.03; ctx.strokeRect(4.95, 1.35, 1.9, 1.1);
   ctx.restore();
-  // 左墙的文字从起点向 gy 变小的方向延伸,所以起点放在屏幕左侧(gy 较大)那端
-  planeText(ctx, 'left', '81.7%', 6.7, 2.15, 0.26, '#4ade80');
-  // 办公室名牌
-  planeText(ctx, 'left', 'DRONE BUSINESS', 7.9, 2.75, 0.13, 'rgba(255,255,255,0.55)', 'center');
+  planeText(ctx, 'left', '主线', 6.55, 2.2, 0.22, '#cbd5e1');
+  planeText(ctx, 'left', OFFICE.wallName, 7.9, 2.75, 0.16, 'rgba(255,255,255,0.7)', 'center');
 }
 
-// ---------- 家具 ----------
 function plant(ctx, cx, cy, big) {
   cyl(ctx, cx, cy, 0, 0.2, 0.34, '#f1efe8');
   const s = big ? 1.15 : 1;
@@ -208,13 +183,17 @@ function plant(ctx, cx, cy, big) {
   for (const [dx, dy, z, r, c] of leaves) blob(ctx, cx + dx, cy + dy, z * s, r * s, c);
 }
 
+function liveWorking(ag) {
+  return ag && ag.seated && ag.presence === 'fresh' && WORKING.has(ag.state);
+}
+
 function drawDesk(ctx, id, env) {
   const { x, y } = DESKS[id];
   const ag = env.agents[id];
-  const exec = id === 'alfred';
+  const exec = id === 'grok';
   for (const [lx, ly] of [[0.06, 0.06], [1.86, 0.06], [0.06, 0.86], [1.86, 0.86]]) box(ctx, x + lx, y + ly, 0, 0.08, 0.08, 0.5, '#2a2e37');
   box(ctx, x, y, 0.5, 2, 1, 0.07, exec ? '#6b4a33' : '#e9dfc9');
-  const active = ag && ag.seated && WORKING.has(ag.state);
+  const active = liveWorking(ag);
   const sc = active ? STATES[ag.state].color : null;
   for (const mx of [x + 0.12, x + 1.08]) {
     box(ctx, mx + 0.33, y + 0.22, 0.57, 0.1, 0.08, 0.06, '#1a1d24');
@@ -222,10 +201,10 @@ function drawDesk(ctx, id, env) {
     const yy = y + 0.255;
     quad3(ctx, [[mx + 0.05, yy, 0.67], [mx + 0.75, yy, 0.67], [mx + 0.75, yy, 1.09], [mx + 0.05, yy, 1.09]], active ? shade(sc, 0.55) : '#11151f');
     if (active) {
-      for (let k = 0; k < 3; k++) {
-        const zz = 0.74 + k * 0.1, len = 0.25 + 0.3 * ((Math.sin(env.t * 1.3 + k * 2 + x) + 1) / 2);
-        quad3(ctx, [[mx + 0.1, yy, zz], [mx + 0.1 + len, yy, zz], [mx + 0.1 + len, yy, zz + 0.04], [mx + 0.1, yy, zz + 0.04]], shade(sc, 1.3));
-      }
+      // 静态屏幕内容：有实时工作状态才亮，不拿滚动假代码冒充进度
+      [[0.28, 0.74], [0.42, 0.84], [0.22, 0.94]].forEach(([len, zz]) => {
+        quad3(ctx, [[mx + 0.1, yy, zz], [mx + 0.1 + len, yy, zz], [mx + 0.1 + len, yy, zz + 0.04], [mx + 0.1, yy, zz + 0.04]], shade(sc, 1.15));
+      });
       env.glows.push({ x: mx + 0.4, y: yy, z: 0.9, color: sc, r: 70 });
     }
   }
@@ -257,7 +236,6 @@ function buildItems() {
   const items = [];
   const add = (k, draw) => items.push({ k, draw });
 
-  // 厨房台面与中岛
   for (let y = 2; y <= 5; y++) add(1 + y, (c) => {
     box(c, 0, y, 0, 1, 1, 0.9, '#e4dfd4');
     box(c, 0.06, y + 0.02, 0, 0.88, 0.96, 0.05, '#4a3b30');
@@ -270,7 +248,6 @@ function buildItems() {
     cyl(c, 2.5, 3.5, 0.93, 0.1, 0.12, '#c2410c');
   });
 
-  // 书架(Alfred 办公室)
   add(5.5 + 0.5, (c) => {
     box(c, 5.1, 0.05, 0, 0.8, 0.45, 1.9, '#5a3a28');
     const cols = ['#ef4444', '#3b82f6', '#eab308', '#22c55e', '#a855f7', '#f97316'];
@@ -280,18 +257,16 @@ function buildItems() {
     }
   });
 
-  // 服务器机柜
   add(9.5 + 0.5, (c, env) => {
     box(c, 9.1, 0.1, 0, 0.8, 0.8, 2.2, '#12151b');
     for (let r = 0; r < 12; r++) for (let k = 0; k < 3; k++) {
-      const on = Math.sin(env.t * 3 + r * 1.7 + k * 2.9) > -0.2;
+      const on = (r + k) % 3 !== 0;
       const z0 = 0.2 + r * 0.16, x0 = 9.22 + k * 0.2;
-      quad3(c, [[x0, 0.905, z0], [x0 + 0.1, 0.905, z0], [x0 + 0.1, 0.905, z0 + 0.06], [x0, 0.905, z0 + 0.06]], on ? (k === 2 ? '#3b82f6' : '#22c55e') : '#1f2937');
+      quad3(c, [[x0, 0.905, z0], [x0 + 0.1, 0.905, z0], [x0 + 0.1, 0.905, z0 + 0.06], [x0, 0.905, z0 + 0.06]], on ? (k === 2 ? '#1d4ed8' : '#166534') : '#1f2937');
     }
-    env.glows.push({ x: 9.5, y: 0.95, z: 1.2, color: '#3b82f6', r: 60 });
+    env.glows.push({ x: 9.5, y: 0.95, z: 1.2, color: '#3b82f6', r: 48 });
   });
 
-  // 沙发、茶几、圆桌
   add(6.5 + 8.5, (c) => {
     box(c, 5, 8.0, 0, 3, 0.28, 0.95, '#2a5f67');
     box(c, 5, 8.28, 0, 3, 0.72, 0.42, '#357a84');
@@ -309,7 +284,6 @@ function buildItems() {
     for (const [dx, dy] of [[-0.85, -0.1], [0.85, 0.05], [0.1, -0.85]]) cyl(c, 2.5 + dx, 9.5 + dy, 0, 0.17, 0.3, '#2f8a96');
   });
 
-  // 落地灯
   add(6.5 + 6.5, (c, env) => {
     cyl(c, 6.5, 6.5, 0, 0.18, 0.05, '#20242d');
     box(c, 6.46, 6.46, 0.05, 0.08, 0.08, 1.9, '#20242d');
@@ -317,13 +291,11 @@ function buildItems() {
     env.glows.push({ x: 6.5, y: 6.5, z: 1.9, color: '#ffcf7a', r: 150, lamp: true });
   });
 
-  // 绿植
   add(0.5 + 9.5, (c) => plant(c, 0.5, 9.5, true));
   add(13.5 + 9.5, (c) => plant(c, 13.5, 9.5, true));
   add(9.5 + 3.5, (c) => plant(c, 9.5, 3.5, false));
   add(1.6 + 1.0, (c) => plant(c, 1.6, 1.2, false));
 
-  // 桌椅
   for (const id of Object.keys(DESKS)) {
     const { x, y } = DESKS[id];
     add(x + 1 + y + 0.5, (c, env) => drawDesk(c, id, env));
@@ -331,7 +303,6 @@ function buildItems() {
     add(x + 0.5 + y + 1.5 + 0.3, (c) => drawChairBack(c, x, y + 1));
   }
 
-  // 玻璃隔断
   for (const w of WALLS) {
     for (let i = w.from; i < w.to; i++) {
       if (w.gap && i >= w.gap[0] && i < w.gap[1]) continue;
@@ -342,8 +313,11 @@ function buildItems() {
   return items;
 }
 
-// ---------- 小人 ----------
-const AGENT_SCALE = 1.4; // 小人整体放大,以脚下为中心
+const AGENT_SCALE = 1.4;
+
+function bodyColor(a) {
+  return a.presence === 'fresh' ? a.color : muteHex(a.color, 0.62);
+}
 
 function drawAgent(ctx, a, t, env) {
   ctx.save();
@@ -360,26 +334,30 @@ function drawAgentBody(ctx, a, t, env) {
   const swing = a.moving ? Math.sin(t * 10 + a.phase) : 0;
   const bob = a.moving ? Math.abs(swing) * 0.05 : 0;
   const lift = seated ? 0.08 : 0;
+  const color = bodyColor(a);
   ellipseFloor(ctx, a.x, a.y, 0, 0.27, 0.27, 'rgba(0,0,0,0.28)');
 
-  if (a.state === 'needsYou' || a.state === 'error') {
+  if (env.selectedId === a.id) {
+    ellipseFloor(ctx, a.x, a.y, 0, 0.48, 0.48, null, 'rgba(226,232,240,0.9)', 2);
+  }
+
+  if (a.presence === 'fresh' && (a.state === 'needsYou' || a.state === 'error')) {
     const pulse = 0.5 + 0.5 * Math.sin(t * 5);
     ellipseFloor(ctx, a.x, a.y, 0, 0.42 + pulse * 0.1, 0.42 + pulse * 0.1, null, a.state === 'error' ? 'rgba(239,68,68,0.9)' : 'rgba(251,146,60,0.9)', 2);
   }
 
-  const dark = shade(a.color, 0.7);
+  const dark = shade(color, 0.7);
   if (!seated) {
     const sx = a.fx * swing * 0.07, sy = a.fy * swing * 0.07;
     box(ctx, a.x - 0.14 + sx, a.y - 0.06 + sy, bob, 0.11, 0.11, 0.24, dark);
     box(ctx, a.x + 0.03 - sx, a.y - 0.06 - sy, bob, 0.11, 0.11, 0.24, dark);
   }
   const z0 = 0.22 + bob + lift;
-  box(ctx, a.x - 0.14, a.y - 0.11, z0, 0.28, 0.22, 0.32, a.color);
+  box(ctx, a.x - 0.14, a.y - 0.11, z0, 0.28, 0.22, 0.32, color);
   box(ctx, a.x - 0.2, a.y - 0.07, z0 + 0.08, 0.06, 0.13, 0.22, dark);
   box(ctx, a.x + 0.14, a.y - 0.07, z0 + 0.08, 0.06, 0.13, 0.22, dark);
   const hz = z0 + 0.32;
-  box(ctx, a.x - 0.14, a.y - 0.14, hz, 0.28, 0.28, 0.26, shade(a.color, 1.12));
-  // 眼睛:朝向相机的那一面才看得到
+  box(ctx, a.x - 0.14, a.y - 0.14, hz, 0.28, 0.28, 0.26, shade(color, 1.12));
   const eye = '#0b0f19';
   if (a.fx > 0) {
     const xx = a.x + 0.141;
@@ -395,12 +373,34 @@ function drawAgentBody(ctx, a, t, env) {
   env.labels.push({ a, wx: a.x, wy: a.y, wz: (hz + 0.3) * AGENT_SCALE + 0.12 });
 }
 
-// ---------- 对外接口 ----------
+function wrapText(ctx, text, maxWidth) {
+  const chars = [...String(text)];
+  const lines = [];
+  let line = '';
+  for (const ch of chars) {
+    const next = line + ch;
+    if (ctx.measureText(next).width > maxWidth && line) {
+      lines.push(line);
+      line = ch;
+    } else line = next;
+  }
+  if (line) lines.push(line);
+  return lines.slice(0, 2);
+}
+
+function bubbleText(a) {
+  if (a.presence === 'fresh' && a.text) return a.text;
+  if (a.presence === 'fresh' && (a.state === 'needsYou' || a.state === 'error')) return STATES[a.state].label;
+  if (a.presence === 'stale' && a.text) return `过期 · ${a.text}`;
+  return '';
+}
+
 export function createRenderer(canvas, agents) {
   const ctx = canvas.getContext('2d');
   const items = buildItems();
   const agentMap = Object.fromEntries(agents.map((a) => [a.id, a]));
   const view = { s: 1, ox: 0, oy: 0, w: 0, h: 0, dpr: 1 };
+  let selectedId = null;
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -408,9 +408,9 @@ export function createRenderer(canvas, agents) {
     view.w = r.width; view.h = r.height; view.dpr = dpr;
     canvas.width = Math.round(r.width * dpr);
     canvas.height = Math.round(r.height * dpr);
-    // 场景外框 960x602,居中缩放,上下给顶栏和底部按钮留空
     const bw = (W + D) * (TW / 2), bh = (W + D) * (TH / 2) + WALL_H * ZU + FLOOR_T * ZU;
-    const padX = 24, padTop = 74, padBot = 70;
+    const narrow = r.width < 720;
+    const padX = narrow ? 10 : 24, padTop = narrow ? 64 : 74, padBot = narrow ? 96 : 70;
     view.s = Math.min((r.width - padX * 2) / bw, (r.height - padTop - padBot) / bh);
     const cx = (-D * TW / 2 + W * TW / 2) / 2;
     const cy = (-WALL_H * ZU + (W + D) * TH / 2 + FLOOR_T * ZU) / 2;
@@ -421,22 +421,41 @@ export function createRenderer(canvas, agents) {
   const world = () => ctx.setTransform(view.dpr * view.s, 0, 0, view.dpr * view.s, view.dpr * view.ox, view.dpr * view.oy);
   const toScreen = (wx, wy, wz) => { const [px, py] = P(wx, wy, wz); return [view.ox + px * view.s, view.oy + py * view.s]; };
 
+  function hitTest(clientX, clientY) {
+    const rect = canvas.getBoundingClientRect();
+    const sx = clientX - rect.left;
+    const sy = clientY - rect.top;
+    const px = (sx - view.ox) / view.s;
+    const py = (sy - view.oy) / view.s;
+    const gx = (px / (TW / 2) + py / (TH / 2)) / 2;
+    const gy = (py / (TH / 2) - px / (TW / 2)) / 2;
+    let best = null, bestD = 0.95;
+    for (const a of agents) {
+      if (!shouldShowOnFloor(a)) continue;
+      const d = Math.hypot(a.x - gx, a.y - gy);
+      if (d < bestD) { bestD = d; best = a; }
+    }
+    return best;
+  }
+
   function draw(t, L) {
-    const env = { t, agents: agentMap, glows: [], labels: [] };
+    const env = { t, agents: agentMap, glows: [], labels: [], selectedId };
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     world();
     drawFloor(ctx);
-    drawBackWalls(ctx, L, t);
+    drawBackWalls(ctx, L);
     drawRugs(ctx);
 
     const list = items.map((it) => ({ k: it.k, f: it.draw }));
-    for (const a of agents) list.push({ k: a.x + a.y + 0.001, f: (c) => drawAgent(c, a, t, env) });
+    for (const a of agents) {
+      if (!shouldShowOnFloor(a)) continue;
+      list.push({ k: a.x + a.y + 0.001, f: (c) => drawAgent(c, a, t, env) });
+    }
     list.sort((p, q) => p.k - q.k);
     for (const it of list) it.f(ctx, env);
 
-    // 光照色调(只染已经画了东西的像素)
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.save();
     ctx.globalCompositeOperation = 'source-atop';
@@ -444,14 +463,13 @@ export function createRenderer(canvas, agents) {
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.restore();
 
-    // 发光:屏幕/灯/机柜,夜里更亮
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const g of env.glows) {
       const [sx, sy] = toScreen(g.x, g.y, g.z);
       const R = g.r * view.s * view.dpr;
       const [r, gg, b] = hexToRgb(g.color);
-      const a = g.lamp ? 0.12 + 0.5 * L.night : 0.1 + 0.3 * L.night;
+      const a = g.lamp ? 0.12 + 0.5 * L.night : 0.08 + 0.22 * L.night;
       const grad = ctx.createRadialGradient(sx * view.dpr, sy * view.dpr, 0, sx * view.dpr, sy * view.dpr, R);
       grad.addColorStop(0, `rgba(${r},${gg},${b},${a})`);
       grad.addColorStop(1, `rgba(${r},${gg},${b},0)`);
@@ -461,27 +479,76 @@ export function createRenderer(canvas, agents) {
     ctx.restore();
 
     drawLabels(env.labels);
+    drawBubbles(env.labels);
+  }
+
+  function placeTags(labels) {
+    const laid = labels.map(({ a, wx, wy, wz }) => {
+      const [sx, sy] = toScreen(wx, wy, wz);
+      return { a, sx, sy };
+    });
+    laid.sort((p, q) => p.sy - q.sy || p.sx - q.sx);
+    for (let i = 1; i < laid.length; i++) {
+      for (let j = 0; j < i; j++) {
+        if (Math.abs(laid[i].sx - laid[j].sx) < 78 && Math.abs(laid[i].sy - laid[j].sy) < 18) {
+          laid[i].sy = laid[j].sy + 18;
+        }
+      }
+    }
+    return laid;
   }
 
   function drawLabels(labels) {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
-    ctx.font = '600 11px -apple-system, "Helvetica Neue", Arial, sans-serif';
+    ctx.font = `600 11px ${FONT}`;
     ctx.textBaseline = 'middle';
-    for (const { a, wx, wy, wz } of labels) {
-      const [sx, sy] = toScreen(wx, wy, wz);
-      const tw = ctx.measureText(a.name).width;
+    for (const { a, sx, sy } of placeTags(labels)) {
+      const p = PRESENCE[a.presence] || PRESENCE.unknown;
+      const title = a.name;
+      const tw = ctx.measureText(title).width;
       const w = tw + 22, h = 17;
       const x = sx - w / 2, y = sy - h / 2;
-      ctx.fillStyle = 'rgba(8,12,22,0.82)';
+      ctx.fillStyle = 'rgba(8,12,22,0.86)';
       ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill();
-      ctx.fillStyle = STATES[a.state].color;
+      ctx.fillStyle = p.color;
       ctx.beginPath(); ctx.arc(x + 9, sy, 3.2, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#e5e7eb';
+      ctx.fillStyle = a.presence === 'fresh' ? '#e5e7eb' : '#94a3b8';
       ctx.textAlign = 'left';
-      ctx.fillText(a.name, x + 16, sy + 0.5);
+      ctx.fillText(title, x + 16, sy + 0.5);
     }
   }
 
+  function drawBubbles(labels) {
+    ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+    ctx.font = `600 11px ${FONT}`;
+    ctx.textBaseline = 'middle';
+    for (const { a, sx, sy } of placeTags(labels)) {
+      const text = bubbleText(a);
+      if (!text) continue;
+      if (a.presence !== 'fresh' && a.id !== selectedId && a.state !== 'needsYou' && a.state !== 'error') continue;
+      const lines = wrapText(ctx, text, 148);
+      const tw = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
+      const w = Math.min(164, tw + 16);
+      const h = 8 + lines.length * 15;
+      const x = sx - w / 2, y = sy - h - 22;
+      ctx.fillStyle = 'rgba(15,23,42,0.94)';
+      ctx.strokeStyle = a.presence === 'fresh' ? 'rgba(148,163,184,0.45)' : 'rgba(100,116,139,0.5)';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, 8); ctx.fill(); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(sx - 5, y + h);
+      ctx.lineTo(sx, y + h + 6);
+      ctx.lineTo(sx + 5, y + h);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = a.presence === 'fresh' ? '#f8fafc' : '#cbd5e1';
+      ctx.textAlign = 'left';
+      lines.forEach((ln, i) => ctx.fillText(ln, x + 8, y + 11 + i * 15));
+    }
+  }
+
+  function setSelected(id) { selectedId = id; }
+
   resize();
-  return { resize, draw };
+  return { resize, draw, hitTest, setSelected };
 }

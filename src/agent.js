@@ -1,36 +1,83 @@
-// Agent = 一个小人。它不"思考",只按 script(动作队列)一条条执行:
-//   goto 走到某格 / wait 等 t 秒 / set 改状态文案 / sit 坐下 / carry 拿或放包裹 / call 触发回调
-// "做什么"由 sim.js 决定,这里只负责"怎么做"。真实事件接入时也是往 script 里塞动作。
+// Agent = 一个小人。它不「思考」，只按 script 一条条执行。
+// 真实/演示都往 script 里塞动作；在岗状态（未知/过期/离线）由 presence.js 另算。
 const sign = (v) => (v > 0 ? 1 : v < 0 ? -1 : 0);
 
+function placeFromCfg(cfg) {
+  if (cfg.desk) {
+    return {
+      seat: [cfg.desk.x, cfg.desk.y + 1],
+      visit: [cfg.desk.x + 1, cfg.desk.y + 1],
+    };
+  }
+  const spot = cfg.spot || [1, 8];
+  const dx = spot[0] < 12 ? 1 : -1;
+  return { seat: [spot[0], spot[1]], visit: [spot[0] + dx, spot[1]] };
+}
+
 export class Agent {
-  constructor(cfg, desk, world) {
+  constructor(cfg, world) {
     this.cfg = cfg;
     this.id = cfg.id;
     this.name = cfg.name;
     this.role = cfg.role;
     this.color = cfg.color;
     this.world = world;
-    this.seat = [desk.x, desk.y + 1];
-    this.visit = [desk.x + 1, desk.y + 1];
+    const place = placeFromCfg(cfg);
+    this.seat = place.seat;
+    this.visit = place.visit;
+    this.hasDesk = Boolean(cfg.desk);
+    if (world && !world.walkable(...this.visit)) {
+      const dirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1]];
+      for (const [dx, dy] of dirs) {
+        const n = [this.seat[0] + dx, this.seat[1] + dy];
+        if (world.walkable(...n)) { this.visit = n; break; }
+      }
+    }
     this.x = this.seat[0] + 0.5;
     this.y = this.seat[1] + 0.5;
     this.fx = 0;
     this.fy = -1;
     this.state = 'idle';
-    this.text = 'Starting up';
+    this.text = '';
     this.seated = true;
     this.moving = false;
     this.carry = false;
     this.lastTask = null;
-    this.speed = 2.1; // 格/秒
+    this.speed = 2.1;
     this.path = [];
     this.script = [];
     this.cur = null;
     this.phase = (cfg.id.charCodeAt(0) % 7) * 0.9;
+    this.lastSeenTs = null;
+    this.lastStatusTs = null;
+    this.presence = cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
+    this.demoActive = false;
   }
 
-  // 打断当前动作,换一套新脚本
+  snapToSeat() {
+    this.x = this.seat[0] + 0.5;
+    this.y = this.seat[1] + 0.5;
+    this.fx = 0;
+    this.fy = -1;
+    this.seated = true;
+    this.moving = false;
+    this.carry = false;
+    this.path = [];
+    this.script = [];
+    this.cur = null;
+  }
+
+  resetUnknown() {
+    this.snapToSeat();
+    this.state = 'idle';
+    this.text = '';
+    this.lastSeenTs = null;
+    this.lastStatusTs = null;
+    this.presence = this.cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
+    this.demoActive = false;
+    this.lastTask = null;
+  }
+
   interrupt(script) {
     this.script = script;
     this.cur = null;
@@ -42,7 +89,6 @@ export class Agent {
   get cell() { return [Math.floor(this.x), Math.floor(this.y)]; }
 
   update(dt) {
-    // 零耗时动作(set/sit/call)可以在同一帧连续执行,所以用循环
     for (let guard = 0; guard < 16; guard++) {
       if (!this.cur) {
         this.cur = this.script.shift() || null;
@@ -62,7 +108,10 @@ export class Agent {
         this.path = this.world.findPath(this.cell, a.cell) || [];
         break;
       case 'wait': a.left = a.t; break;
-      case 'set': this.state = a.state; this.text = a.text; break;
+      case 'set':
+        this.state = a.state;
+        this.text = a.text;
+        break;
       case 'sit':
         this.seated = true;
         this.x = this.seat[0] + 0.5;
@@ -71,10 +120,10 @@ export class Agent {
         break;
       case 'carry': this.carry = a.on; break;
       case 'call': a.fn(this); break;
+      case 'snap': this.snapToSeat(); break;
     }
   }
 
-  // 返回 true 表示这条动作做完了
   tick(a, dt) {
     if (a.type === 'wait') { a.left -= dt; return a.left <= 0; }
     if (a.type !== 'goto') return true;
