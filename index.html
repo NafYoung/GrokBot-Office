@@ -56,7 +56,9 @@
       </form>
       <details class="card integration-card" id="integrationCard">
         <summary>连接 Grokbot 的真实任务</summary>
-        <p class="hint">生成与这台电脑、当前端口对应的上报规则，再保存到需要同步的 Bot 长期指令中。</p>
+        <p class="hint">每个 Bot 都需单独配置。只给主 Bot 保存规则，不会自动同步其他成员。</p>
+        <label for="integrationAgent">选择要连接的 Bot</label>
+        <select id="integrationAgent"><option value="">请选择一个 Bot</option></select>
         <button type="button" id="generateIntegration">生成接入指令</button>
         <p id="integrationMessage" class="hint" role="status"></p>
         <label for="integrationInstructions" id="integrationLabel" hidden>复制给 Grokbot 的配置说明（不含口令）</label>

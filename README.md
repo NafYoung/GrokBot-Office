@@ -54,7 +54,7 @@ http://127.0.0.1:8787/?stale=3&offline=8
 
 ## 连接 Grok Bot
 
-名单、名字和工位来自 `src/config.js`，不是从 Grokbot 应用自动同步的。仓库提供状态接收服务和 `office_report.py` 上报器；在页面右侧展开「连接 Grokbot 的真实任务」，生成对应当前电脑和端口的规则，保存到执行任务的各个 Bot 的长期指令中，再通过 Grokbot 已连接的本机 Shell 上报。
+名单、名字和工位来自 `src/config.js`，不是从 Grokbot 应用自动同步的。仓库提供状态接收服务和 `office_report.py` 上报器；在页面右侧展开「连接 Grokbot 的真实任务」，选择具体 Bot，生成对应当前电脑、端口和工位 ID 的专属规则，直接保存到这个 Bot 的长期指令中，再通过它已连接的本机 Shell 上报。每个成员需要分别配置，主 Bot 的规则与工具权限不会自动继承给其他 Bot。
 
 已有的「机器人办公室面板」Webhook 只处理点击通知，不会自动触发普通聊天任务的状态同步。不要沿用旧电脑的 machineId 或旧端口；生成器会给出当前配置。具体设置与旧 Webhook 的修订见 [GROKBOT.md](GROKBOT.md)。生成配置不会自动修改 Grokbot 应用。
 

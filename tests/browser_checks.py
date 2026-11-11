@@ -83,10 +83,15 @@ def run(screenshots=None):
 
             page.locator('#integrationCard summary').click()
             page.locator('#generateIntegration').click()
+            assert '请先选择' in page.locator('#integrationMessage').inner_text()
+            page.select_option('#integrationAgent', 'guan')
+            page.locator('#generateIntegration').click()
             page.locator('#integrationInstructions').wait_for(state='visible')
             instructions = page.locator('#integrationInstructions').input_value()
             assert base in instructions
             assert 'office_report.py' in instructions
+            assert '--agent guan' in instructions
+            assert '--agent grok' not in instructions
             assert 'browser-test-token' not in instructions
             assert '尚未修改 Grokbot' in page.locator('#integrationMessage').inner_text()
             assert srv.hub.sequence == 0
@@ -96,8 +101,14 @@ def run(screenshots=None):
             page.locator('#integrationCard').scroll_into_view_if_needed()
             shot(page, 'connection-setup-mobile')
             page.set_viewport_size({'width':1440,'height':900})
+            page.select_option('#integrationAgent', 'shiyan')
+            assert page.locator('#integrationInstructions').is_hidden()
+            assert page.locator('#integrationInstructions').input_value() == ''
+            page.locator('#generateIntegration').click()
+            page.locator('#integrationInstructions').wait_for(state='visible')
+            assert '--agent shiyan' in page.locator('#integrationInstructions').input_value()
             page.locator('#integrationCard summary').click()
-            results['setup'] = 'setup uses the receiving server machine and port; generates no events and exposes no token'
+            results['setup'] = 'setup binds the selected bot, machine and port; changing bot clears old rules; no events or secrets generated'
 
             page.locator('#modeBadge').get_by_text('等待 Bot 上报', exact=True).wait_for()
             assert '名单来自工位配置' in page.locator('#feedBanner').inner_text()
@@ -110,6 +121,16 @@ def run(screenshots=None):
             publish({'agent':'grok', 'state':'idle', 'text':'任务完成'})
             state(page, 'grok', 'idle')
             page.locator('#team li[data-id="grok"] .tx').get_by_text('任务完成', exact=False).wait_for()
+            for agent, expected in [('guan', 'browsing'), ('shiyan', 'terminal')]:
+                OfficeClient(base, 'browser-test-token', agent=agent).report({'state': expected, 'text': agent + ' 的独立任务'})
+                state(page, agent, expected)
+                page.locator(f'li[data-id="{agent}"] .tx').get_by_text(agent + ' 的独立任务', exact=False).wait_for()
+            assert page.evaluate('window.office.agents.find(a=>a.id==="grok").text') == '任务完成'
+            shot(page, 'multiple-bots')
+            for agent in ('guan', 'shiyan'):
+                OfficeClient(base, 'browser-test-token', agent=agent).report({'state': 'idle', 'text': agent + ' 完成'})
+                state(page, agent, 'idle')
+            results['multiple_bots'] = 'main bot stays idle while two other bot statuses and descriptions update independently'
             results['http_to_gui'] = 'authenticated HTTP status reaches SSE and UI; configured names and handoff-only events do not imply task sync'
             publish({'type':'handoff','agent':'grok','to':'qiwen','text':'交接材料'})
             page.wait_for_function('window.office.agents[0].moving')

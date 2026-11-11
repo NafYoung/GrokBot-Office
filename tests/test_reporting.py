@@ -47,6 +47,56 @@ class ReportingTest(unittest.TestCase):
             self.assertEqual(current['state'], state)
         self.assertEqual(self.server.hub.sequence, 5)
 
+    def test_each_agent_setup_has_its_own_fixed_identity(self):
+        for agent in ('grok', 'guan', 'shiyan'):
+            config = self.client.request('/api/integration?agent=' + agent)
+            self.assertEqual(config['agent']['id'], agent)
+            self.assertIn('--agent ' + agent, config['instructions'])
+            self.assertIn(config['agent']['name'], config['instructions'])
+            if agent != 'grok':
+                self.assertNotIn('--agent grok', config['instructions'])
+        for query in ('agent=python', 'agent=', 'agent=grok&agent=guan'):
+            with self.assertRaises(ReportError):
+                self.client.request('/api/integration?' + query)
+        self.assertEqual(self.server.hub.sequence, 0)
+
+    def test_bound_reporter_rejects_wrong_identity_without_touching_main_bot(self):
+        client = OfficeClient(self.url, self.token, agent='guan')
+        self.assertEqual(client.check()['agent'], 'guan')
+        self.client.report({'agent': 'grok', 'state': 'thinking', 'text': '主 Bot 原任务'})
+        with self.assertRaisesRegex(ReportError, '不一致'):
+            client.report({'agent': 'grok', 'state': 'coding', 'text': '不能串到主 Bot'})
+        self.assertEqual(self.server.hub.sequence, 1)
+        client.report({'state': 'browsing', 'text': '观世界自己的任务'})
+        snapshots = {item['agent']: item for item in self.server.hub.snapshot()}
+        self.assertEqual(snapshots['grok']['text'], '主 Bot 原任务')
+        self.assertEqual(snapshots['guan']['text'], '观世界自己的任务')
+        with self.assertRaises(ReportError):
+            OfficeClient(self.url, self.token, agent='python').report({'state': 'idle'})
+
+    def test_all_current_bots_keep_independent_statuses(self):
+        ids = list(self.server.hub.roster)
+        for agent in ids:
+            OfficeClient(self.url, self.token, agent=agent).report({'state': 'coding', 'text': agent + ' 的任务'})
+        self.assertEqual(len(self.server.hub.snapshot()), len(ids))
+        OfficeClient(self.url, self.token, agent='grok').report({'state': 'idle', 'text': '主 Bot 完成'})
+        for item in self.server.hub.snapshot():
+            if item['agent'] == 'grok':
+                self.assertEqual(item['state'], 'idle')
+            else:
+                self.assertEqual(item['state'], 'coding')
+                self.assertEqual(item['text'], item['agent'] + ' 的任务')
+
+    def test_bound_cli_supplies_agent_when_json_omits_it(self):
+        result = subprocess.run([sys.executable, str(ROOT / 'office_report.py'), '--url', self.url,
+                                 '--agent', 'shiyan', 'report'],
+                                env={**os.environ, 'OFFICE_TOKEN': self.token},
+                                input=json.dumps({'state': 'terminal', 'text': '实验助教独立任务'}),
+                                text=True, capture_output=True, timeout=10)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['agent'], 'shiyan')
+        self.assertEqual(self.server.hub.snapshot()[0]['agent'], 'shiyan')
+
     def test_wrong_token_or_machine_does_not_publish(self):
         for client in (OfficeClient(self.url, 'wrong'), OfficeClient(self.url, self.token, 'another-mac')):
             with self.assertRaises(ReportError):

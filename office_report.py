@@ -64,10 +64,13 @@ def read_token(token_file=None):
 
 
 class OfficeClient:
-    def __init__(self, url, token='', expected_machine=None, timeout=5):
+    def __init__(self, url, token='', expected_machine=None, timeout=5, agent=None):
+        if agent is not None and (not isinstance(agent, str) or not agent.strip()):
+            raise ReportError('绑定的 Bot ID 不能为空，请重新生成专属规则。')
         self.url = normalize_url(url)
         self.token = token
         self.expected_machine = expected_machine
+        self.agent = agent
         self.timeout = timeout
         self.opener = build_opener(NoRedirect())
 
@@ -112,7 +115,9 @@ class OfficeClient:
             raise ReportError('该地址不是受支持的办公室接收服务。')
         if self.expected_machine and info['machine'] != self.expected_machine:
             raise ReportError('连接到了另一台电脑上的办公室，已停止上报；请重新从正在看的办公室生成接入指令。')
-        return {'ok': True, 'machine': info['machine'], 'url': self.url,
+        if self.agent and not any(a.get('id') == self.agent for a in info.get('agents', [])):
+            raise ReportError('绑定的 Bot 不在当前工位名单中，请更新服务并为这个 Bot 重新生成规则。')
+        return {'ok': True, 'machine': info['machine'], 'url': self.url, 'agent': self.agent,
                 'message': '连接检查通过；未写入任务事件，尚不代表 Bot 已配置自动上报。'}
 
     def agents(self):
@@ -124,6 +129,12 @@ class OfficeClient:
             raise ReportError('需要一条 status、handoff 或 sync 事件 JSON；点击工位的 ping 不是任务状态。')
         if set(payload) - {'type', 'agent', 'state', 'text', 'to'}:
             raise ReportError('事件仅允许 type、agent、state、text、to 字段。')
+        if self.agent:
+            if payload.get('type') == 'sync':
+                raise ReportError('专属上报命令用于此 Bot 的状态或交接，不能用来发起全员会议。')
+            if 'agent' in payload and payload['agent'] != self.agent:
+                raise ReportError('事件的 agent 与专属命令绑定的 Bot 不一致，未发送；不要沿用主 Bot 的 ID。')
+            payload = {**payload, 'agent': self.agent}
         if len(json.dumps(payload, ensure_ascii=False).encode('utf-8')) > 16 * 1024:
             raise ReportError('事件过大；只发送简短任务描述。')
         self.check()
@@ -138,13 +149,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--url', default=os.environ.get('OFFICE_URL'), help='正在查看的办公室服务根地址；没有默认端口')
     parser.add_argument('--expect-machine', help='接收服务所在电脑的名称，防止发到旧电脑')
+    parser.add_argument('--agent', help='固定此命令对应的 Bot 工位 ID；省略事件 agent 时自动补入，冲突则拒绝')
     parser.add_argument('--token-file', help='本机口令文件路径；不在命令行传口令内容')
     parser.add_argument('command', choices=('check', 'agents', 'report'))
     args = parser.parse_args(argv)
     try:
         if not args.url:
             raise ReportError('请显式提供 --url 或 OFFICE_URL；从正在看的办公室生成接入指令，避免用错端口。')
-        client = OfficeClient(args.url, read_token(args.token_file), args.expect_machine)
+        client = OfficeClient(args.url, read_token(args.token_file), args.expect_machine, agent=args.agent)
         if args.command == 'check':
             result = client.check()
         elif args.command == 'agents':

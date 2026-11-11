@@ -24,7 +24,7 @@ from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie, CookieError
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 from integration import connection_info
 
 ROOT = Path(__file__).resolve().parent
@@ -443,7 +443,12 @@ def make_handler(hub, token):
             if path.startswith("/api/") and not self.read_authorized():
                 return self.reply(401, {"error": "office authentication required"})
             if path == "/api/integration":
-                return self.reply(200, connection_info(ROOT, self.server.server_port, hub.office, bool(token)))
+                query = parse_qs(urlsplit(self.path).query, keep_blank_values=True)
+                refs = query.get("agent")
+                agent_id = hub.resolve(refs[0]) if refs and len(refs) == 1 else None
+                if refs is not None and agent_id is None:
+                    return self.reply(422, {"error": "请选择当前工位名单中的一个 Bot"})
+                return self.reply(200, connection_info(ROOT, self.server.server_port, hub.office, bool(token), agent_id))
             if path == "/api/health":
                 with hub.lock:
                     nsub = len(hub.subscribers)
