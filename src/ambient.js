@@ -14,6 +14,10 @@ export const SCENE_ACTIONS = {
   coffee: '喝咖啡', lounge: '坐沙发', stretch: '伸懒腰', stroll: '散散步', home: '回工位',
 };
 
+// 正常办公以在座为主；预览只缩短等待，也不会让全员同时外出。
+export const OFFICE_PACE = { initial:[20, 90], desk:[120, 240], gap:[25, 45], maxAway:2 };
+const PREVIEW_PACE = { initial:[.5, 4], desk:[15, 30], gap:[4, 7], maxAway:2 };
+
 export function canLoaf(agent) {
   if (!agent || agent.state !== 'idle' || !shouldShowOnFloor(agent)) return false;
   // 常驻角色的日常动作不依赖心跳；未知或旧 idle 仍保留原来的数据标记。
@@ -59,10 +63,18 @@ export class AmbientLife {
   constructor({ agents, rand = Math.random }) {
     this.agents = agents;
     this.rand = rand;
+    this.reset();
+  }
+
+  reset({preview = false} = {}) {
+    this.pace = preview ? PREVIEW_PACE : OFFICE_PACE;
+    this.departureIn = 0;
   }
 
   range(a, b) { return a + this.rand() * (b - a); }
   pick(list) { return list[Math.floor(this.rand() * list.length)]; }
+  initialDelay() { return this.range(...this.pace.initial); }
+  deskDelay() { return this.range(...this.pace.desk); }
 
   freeSpots(a, spots) {
     return spots.filter(spot => !sameCell(spot, a.seat)
@@ -81,7 +93,7 @@ export class AmbientLife {
       this.sendHome(a);
       a.script.push({type:'wait', t:20}, {type:'call', fn:() => { a.manualAction = null; }});
       a.manualAction = kind;
-      a.loafIn = this.range(6, 14);
+      a.loafIn = this.deskDelay();
       return {ok:true, message:`已安排 ${a.name} 回工位歇一会儿。`};
     }
     const spots = this.freeSpots(a, LOAF_SPOTS[kind]);
@@ -93,7 +105,7 @@ export class AmbientLife {
     a.ambientSpot = spot;
     a.manualAction = kind;
     a.lastLoaf = kind;
-    a.loafIn = this.range(12, 20);
+    a.loafIn = this.deskDelay();
     return {ok:true, message:`已安排 ${a.name} ${SCENE_ACTIONS[kind]}。`};
   }
 
@@ -109,23 +121,34 @@ export class AmbientLife {
   }
 
   update(dt) {
+    this.departureIn = Math.max(0, this.departureIn - dt);
+    const ready = [];
     for (const a of this.agents) {
       if ((a.ambient || a.ambientSpot) && !canLoaf(a)) {
         this.sendHome(a);
         continue;
       }
       if (!canLoaf(a) || a.cur || a.script.length) continue;
-      if (a.loafIn == null) a.loafIn = this.range(2, 7);
+      if (a.loafIn == null) a.loafIn = this.initialDelay();
       a.loafIn -= dt;
-      if (a.loafIn > 0) continue;
+      if (a.loafIn <= 0) ready.push(a);
+    }
+    // 手动安排及真实交接中的行走也占用场景空间，但不强行取消它们。
+    const away = this.agents.filter(a => shouldShowOnFloor(a)
+      && (a.ambient || a.ambientSpot || a.moving || !sameCell(a.cell, a.seat))).length;
+    if (this.departureIn > 0 || away >= this.pace.maxAway) return;
+    // 等得最久的人先出发；同一帧也只安排一个，避免一群人同时起身。
+    for (const a of ready.sort((a, b) => a.loafIn - b.loafIn)) {
       const choice = this.chooseActivity(a);
-      if (!choice) { a.loafIn = this.range(2, 4); continue; }
+      if (!choice) { a.loafIn = this.range(10, 20); continue; }
       const { kind, spot } = choice;
       a.interrupt(loafScript(a, kind, spot, this.range(...LOAF[kind].dwell)));
       // 同一帧内也预留目的地，后面的同事会选择另一个位置。
       a.ambientSpot = spot;
       a.lastLoaf = kind;
-      a.loafIn = this.range(6, 14);
+      a.loafIn = this.deskDelay();
+      this.departureIn = this.range(...this.pace.gap);
+      break;
     }
   }
 
@@ -135,6 +158,6 @@ export class AmbientLife {
       { type: 'sit' },
       { type: 'mark', ambient: null, label: '', prop: null },
     ]);
-    a.loafIn = this.range(4, 8);
+    a.loafIn = this.deskDelay();
   }
 }

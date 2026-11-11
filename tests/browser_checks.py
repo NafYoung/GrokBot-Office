@@ -43,6 +43,19 @@ def run(screenshots=None):
     def state(page, agent, expected):
         page.wait_for_function("([id, expected]) => window.office.agents.find(a => a.id === id).state === expected", arg=[agent, expected])
 
+    def advance_to_break(page, agent=None, phase='doing'):
+        # Advance scene time through the normal scheduler; do not change real event timestamps.
+        assert page.evaluate('''([id,phase]) => {
+          const {sim,agents,ui}=window.office;
+          for(let t=0;t<900;t+=.1) {
+            sim.update(.1); agents.forEach(a=>a.update(.1));
+            if(agents.some(a=>(!id || a.id===id) && a.ambientStage===phase)) {
+              ui.update(); return true;
+            }
+          }
+          return false;
+        }''', [agent,phase])
+
     def layout(page):
         return page.evaluate("""() => {
           const box = s => {const r=document.querySelector(s).getBoundingClientRect(); return {top:r.top,bottom:r.bottom,height:r.height}};
@@ -94,8 +107,11 @@ def run(screenshots=None):
             assert all('/api/office' not in url for url in requests)
             results['login'] = 'wrong token rejected; session unlocks SSE without storing token'
 
-            # Daily life starts without making a single synthetic status event.
-            page.wait_for_function('window.office.agents.some(a=>a.ambientStage === "doing")')
+            # Start quietly; normal scheduling still brings occasional life without fake events.
+            assert page.evaluate('window.office.agents.every(a=>!a.ambientSpot && !a.moving)')
+            shot(page, 'quiet-office-start')
+            advance_to_break(page)
+            assert page.evaluate('window.office.agents.filter(a=>a.ambientSpot).length <= 2')
             daily_id = page.evaluate('window.office.agents.find(a=>a.ambientStage === "doing").id')
             page.locator(f'li[data-id="{daily_id}"]').click()
             page.locator('#selected .sel-loaf').get_by_text('日常动画', exact=False).wait_for()
@@ -106,7 +122,7 @@ def run(screenshots=None):
             assert '0 空闲' in page.locator('#stats').inner_text()
             assert srv.hub.sequence == 0 and not event_posts
             shot(page, 'daily-without-reports')
-            results['default_daily_life'] = 'unreported residents animate with daily labels; no fake contact, tasks, live counts or POSTs'
+            results['default_daily_life'] = 'quiet startup and occasional scheduled breaks; at most two away; no fake contact, tasks, live counts or POSTs'
 
             page.locator('#integrationCard summary').click()
             page.locator('#generateIntegration').click()
@@ -208,6 +224,8 @@ def run(screenshots=None):
             state(page, 'grok', 'error')
             results['rest_preview'] = 'idle animation runs without posting or inventing work events'
             publish({'agent':'newbee','state':'idle','text':'等待下一项任务'})
+            page.wait_for_function('window.office.agents.find(a=>a.id==="newbee").text === "等待下一项任务"')
+            advance_to_break(page, 'newbee', 'going')
             page.wait_for_function('window.office.agents.find(a=>a.id==="newbee").moving && window.office.agents.find(a=>a.id==="newbee").ambient != null')
             publish({'agent':'newbee','state':'needsYou','text':'请确认新任务'})
             state(page, 'newbee', 'needsYou')
@@ -297,6 +315,8 @@ def run(screenshots=None):
             daily.wait_for_function('window.office.ui.feed === "open" && window.office.agents.find(a=>a.id==="ziliao").lastStatusTs != null')
             idle_ts = daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").lastStatusTs')
             idle_seq = srv.hub.sequence
+            daily.wait_for_function('window.office.agents.find(a=>a.id==="ziliao").presence === "offline"')
+            advance_to_break(daily, 'ziliao')
             daily.wait_for_function('''() => {
               const a=window.office.agents.find(a=>a.id==='ziliao');
               return a.presence === 'offline' && a.ambientStage === 'doing';
@@ -329,6 +349,8 @@ def run(screenshots=None):
             publish({'type':'task','agent':'ziliao','taskId':'daily-acceptance','eventId':'daily-done','phase':'completed',
                      'revision':2,'text':'日常验收：资料整理完成'})
             state(daily, 'ziliao', 'idle')
+            assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").loafIn >= 119')
+            advance_to_break(daily, 'ziliao')
             daily.wait_for_function('window.office.agents.find(a=>a.id==="ziliao").ambient != null')
             assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").tasks[0].phase') == 'completed'
             assert not event_posts

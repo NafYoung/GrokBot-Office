@@ -38,6 +38,7 @@ export class Simulation {
   start({ rest = false } = {}) {
     this.running = true;
     this.demoRest = rest;
+    this.ambient.reset({preview:rest});
     const now = Date.now() / 1000;
     for (const a of this.agents) {
       if (a.cfg.kind === 'on_demand') continue;
@@ -49,7 +50,7 @@ export class Simulation {
         a.state = 'idle';
         a.text = '【演示】暂时没有任务';
         a.lastStatusTs = now;
-        a.loafIn = this.range(0.5, 4);
+        a.loafIn = this.ambient.initialDelay();
       }
     }
   }
@@ -58,6 +59,7 @@ export class Simulation {
     this.running = false;
     this.demoRest = false;
     this.syncIn = 14;
+    this.ambient.reset();
     for (const a of this.agents) a.resetUnknown();
   }
 
@@ -267,7 +269,7 @@ export class Simulation {
         return true;
       }
       // 工作状态与日志立即生效；回座位只负责表现，不延迟错误或待办提醒。
-      if (ev.state === 'idle' && a.state !== 'idle') a.loafIn = this.range(2, 7);
+      if (ev.state === 'idle' && a.state !== 'idle') a.loafIn = this.ambient.deskDelay();
       a.state = ev.state;
       a.text = text;
       if (!quiet) this.log(a, text, { demo: false, ts: ev.ts });
