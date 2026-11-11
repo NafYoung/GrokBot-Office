@@ -159,7 +159,7 @@ test('sync 事件：开完会恢复各自真实状态', () => {
   run(agents, sim, 8);
   assert.equal(sim.applyEvent({ type: 'sync' }), true);
   run(agents, sim, 5);
-  assert.ok(agents.some((a) => a.text === SYNC.here || a.text === SYNC.lead));
+  assert.ok(agents.some((a) => a.activityLabel === SYNC.here || a.activityLabel === SYNC.lead));
   run(agents, sim, 30);
   for (const [id, [state, text]] of Object.entries(real)) {
     const a = agents.find((x) => x.id === id);

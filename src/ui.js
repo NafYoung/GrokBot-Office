@@ -1,6 +1,6 @@
 // 中文面板：在岗状态、最近活动、选中工位。不参与模拟。
 import { OFFICE, STATES, PRESENCE, WORKING_STATES } from './config.js';
-import { formatAge, statusCaption } from './presence.js';
+import { formatAge, statusCaption, hasFreshTask } from './presence.js';
 import { drawRobotPortrait } from './robot.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,6 +18,7 @@ function contactNote(a) {
   if (a.lastStatusTs == null) return '已收到在岗信息，尚未收到任务状态。';
   if (a.presence === 'stale') return '上次事件已超过新鲜度阈值';
   if (a.presence === 'offline') return '很久没有新事件，按离线显示';
+  if (!hasFreshTask(a)) return '最近有联系，但任务状态已过期；等待这个 Bot 重新上报。';
   return a.role;
 }
 
@@ -75,22 +76,22 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       badge = '已断开';
       kind = 'down';
       feedText = feed === 'noserver'
-        ? '未连接到办公室服务。请用 python3 server.py 启动。'
+        ? '未连接到办公室服务，正在自动重试。请确认 python3 server.py 已启动。'
         : '事件流已断开，正在重连…';
     } else if (feed === 'connecting') {
       badge = '连接中';
       feedText = '正在连接事件流…';
     } else {
-      const freshTasks = agents.filter((a) => a.presence === 'fresh' && a.lastStatusTs != null);
+      const freshTasks = agents.filter(hasFreshTask);
       const seen = agents.filter((a) => a.lastSeenTs != null);
       if (freshTasks.length) {
         badge = '已收到任务状态';
         kind = 'live';
-        const latest = Math.max(...freshTasks.map((a) => a.lastSeenTs));
+        const latest = Math.max(...freshTasks.map((a) => a.lastStatusTs));
         feedText = `办公室服务已连接 · ${freshTasks.length} 个 Bot 有新鲜任务状态 · 最近上报${formatAge(latest, Date.now() / 1000)}`;
       } else if (seen.some((a) => a.presence === 'fresh')) {
         badge = '等待任务状态';
-        feedText = '办公室服务已连接 · 收到 Bot 在岗信息，尚未收到任务状态';
+        feedText = '办公室服务已连接 · 收到 Bot 在岗信息，等待新的任务状态';
       } else if (seen.length) {
         badge = '上报已过期';
         feedText = '办公室服务已连接 · Bot 上报已过期，当前显示的是历史记录';
@@ -149,6 +150,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
 
   function caption(a) {
     if (a.presence === 'fresh' && a.lastStatusTs == null && !a.demoActive) return '在岗 · 未上报状态';
+    if (a.presence === 'fresh' && !hasFreshTask(a)) return '在岗 · 任务状态过期';
     const base = statusCaption({ presence: a.presence, state: a.state, STATES, PRESENCE, kind: a.cfg.kind });
     if (a.presence === 'fresh' && a.ambientLabel) return `摸鱼 · ${a.ambientLabel}`;
     return base;
@@ -157,7 +159,8 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
   function row(a, nowSec) {
     const cap = caption(a);
     const p = PRESENCE[a.presence] || PRESENCE.unknown;
-    const age = formatAge(a.lastSeenTs, nowSec);
+    const age = a.lastStatusTs == null ? `联系${formatAge(a.lastSeenTs, nowSec)}`
+      : `任务${formatAge(a.lastStatusTs, nowSec)}`;
     const work = a.text ? esc(a.text) : '尚未收到任务上报';
     return `<li data-id="${esc(a.id)}" class="${selectedId === a.id ? 'on' : ''}">
       ${portrait(a)}
@@ -186,6 +189,8 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       </div>
       <p class="sel-state"><i class="dot" style="background:${p.color}"></i>${esc(cap)} · ${esc(formatAge(a.lastSeenTs, nowSec))}</p>
       <p class="sel-text">${esc(a.text || '尚未收到任务上报')}</p>
+      ${a.lastStatusTs != null ? `<p class="muted">任务上报：${esc(formatAge(a.lastStatusTs, nowSec))}</p>` : ''}
+      ${a.activityLabel ? `<p class="sel-loaf">活动：${esc(a.activityLabel)}</p>` : ''}
       ${a.ambientLabel ? `<p class="sel-loaf">摸鱼：${esc(a.ambientLabel)}</p>` : ''}
       <p class="muted sel-note">${esc(contactNote(a))}</p>`;
   }
@@ -193,18 +198,18 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
   function update(nowSec = Date.now() / 1000) {
     const sig = [
       uiMode, feed, selectedId,
-      ...agents.map((a) => `${a.id}:${a.presence}:${a.state}:${a.text}:${a.lastStatusTs == null}:${a.ambientLabel}:${formatAge(a.lastSeenTs, nowSec)}`),
+      ...agents.map((a) => `${a.id}:${a.presence}:${a.taskPresence}:${a.state}:${a.text}:${a.activityLabel}:${a.ambientLabel}:${formatAge(a.lastSeenTs, nowSec)}:${formatAge(a.lastStatusTs, nowSec)}`),
     ].join('|');
     if (sig === lastSig) return;
     lastSig = sig;
 
     const n = (pred) => agents.filter(pred).length;
     const unreported = (a) => a.presence === 'fresh' && a.lastStatusTs == null && !a.demoActive;
-    const working = n((a) => a.presence === 'fresh' && !unreported(a) && WORKING_STATES.includes(a.state) && !['needsYou', 'error'].includes(a.state));
-    const need = n((a) => a.presence === 'fresh' && a.state === 'needsYou');
-    const errors = n((a) => a.presence === 'fresh' && a.state === 'error');
-    const loafing = n((a) => a.presence === 'fresh' && a.state === 'idle' && !unreported(a));
-    const stale = n((a) => a.presence === 'stale');
+    const working = n((a) => hasFreshTask(a) && WORKING_STATES.includes(a.state) && !['needsYou', 'error'].includes(a.state));
+    const need = n((a) => hasFreshTask(a) && a.state === 'needsYou');
+    const errors = n((a) => hasFreshTask(a) && a.state === 'error');
+    const loafing = n((a) => hasFreshTask(a) && a.state === 'idle');
+    const stale = n((a) => a.presence === 'stale' || (a.presence === 'fresh' && !unreported(a) && !hasFreshTask(a)));
     const unknown = n((a) => a.presence === 'unknown' || a.presence === 'unconnected');
     const offline = n((a) => a.presence === 'offline');
     const stat = (color, v, label) => `<span class="stat"><i class="dot" style="background:${color}"></i>${v} ${label}</span>`;

@@ -1,23 +1,26 @@
 // 演示模式才随机排任务。真实模式只走 applyEvent()。
-import { CONVENE_ID, GATHER, STATES } from './config.js';
+import { CONVENE_ID, GATHER, STATES, FRESHNESS } from './config.js';
 import { AmbientLife, LOAF, LOAF_SPOTS, loafScript } from './ambient.js';
+import { updatePresence } from './presence.js';
 
 export const SYNC = {
   lead: '主持全员同步',
   go: '前往全员同步',
   here: '参加全员同步',
   log: '召集全员到前台开会',
+  liveLog: '收到办公室同步请求',
 };
 
 export class Simulation {
   /**
-   * @param {{agents: import('./agent.js').Agent[], rand?: () => number, onLog?: Function}} opts
+   * @param {{agents: import('./agent.js').Agent[], rand?: () => number, onLog?: Function, freshness?: typeof FRESHNESS}} opts
    */
-  constructor({ agents, rand = Math.random, onLog = () => {} }) {
+  constructor({ agents, rand = Math.random, onLog = () => {}, freshness = FRESHNESS }) {
     this.agents = agents;
     this.byId = Object.fromEntries(agents.map((a) => [a.id, a]));
     this.rand = rand;
     this.onLog = onLog;
+    this.freshness = freshness;
     this.running = false;
     this.demoRest = false;
     this.syncIn = 14;
@@ -28,6 +31,10 @@ export class Simulation {
   pick(list) { return list[Math.floor(this.rand() * list.length)]; }
   log(agent, text, extra = {}) { this.onLog({ agent, text, demo: this.running, ...extra }); }
 
+  refreshPresence(nowSec = Date.now() / 1000) {
+    for (const a of this.agents) updatePresence(a, { ...this.freshness, nowSec, demo: this.running });
+  }
+
   start({ rest = false } = {}) {
     this.running = true;
     this.demoRest = rest;
@@ -37,6 +44,7 @@ export class Simulation {
       a.demoActive = true;
       a.lastSeenTs = now;
       a.presence = 'fresh';
+      a.taskPresence = 'fresh';
       if (rest) {
         a.state = 'idle';
         a.text = '【演示】暂时没有任务';
@@ -72,6 +80,12 @@ export class Simulation {
 
   update(dt, nowSec = Date.now() / 1000) {
     if (!this.running || this.demoRest) {
+      for (const a of this.agents) {
+        const activity = a.activityKind || a.script.some((step) => step.type === 'activity' && step.kind);
+        if (activity && a.presence !== 'fresh') {
+          a.interrupt([{ type: 'goto', cell: a.seat }, { type: 'sit' }]);
+        }
+      }
       this.ambient.update(dt);
       return;
     }
@@ -149,20 +163,27 @@ export class Simulation {
     ];
   }
 
-  runSync({ demo = false } = {}) {
+  runSync({ demo = false, ts } = {}) {
     const lead = this.convene();
     if (!lead) return false;
+    if (!demo) {
+      this.log(lead, SYNC.liveLog, { demo: false, ts });
+      this.refreshPresence();
+      if (lead.presence !== 'fresh') return true;
+    }
     const dur = 10;
     const others = demo
       ? this.agents.filter((a) => a !== lead && a.cfg.kind === 'resident')
-      : this.agents.filter((a) => a !== lead && a.cfg.kind !== 'on_demand' && a.lastSeenTs);
+      : this.agents.filter((a) => a !== lead && a.cfg.kind !== 'on_demand' && a.presence === 'fresh');
 
     const prev = new Map([lead, ...others].map((a) => [a, { state: a.state, text: a.text }]));
-    const restore = (a) => ({ type: 'set', ...prev.get(a) });
+    const restore = (a) => demo ? { type: 'set', ...prev.get(a) } : { type: 'activity' };
+    const activity = (text) => demo ? { type: 'set', state: 'thinking', text }
+      : { type: 'activity', kind: 'sync', label: text };
 
     lead.interrupt([
-      { type: 'set', state: 'thinking', text: SYNC.lead },
-      { type: 'call', fn: () => this.log(lead, SYNC.log) },
+      activity(SYNC.lead),
+      ...(demo ? [{ type: 'call', fn: () => this.log(lead, SYNC.log) }] : []),
       { type: 'goto', cell: lead.seat },
       { type: 'sit' },
       { type: 'wait', t: dur + 9 },
@@ -170,9 +191,9 @@ export class Simulation {
     ]);
     others.forEach((a, i) => {
       a.interrupt([
-        { type: 'set', state: 'thinking', text: SYNC.go },
+        activity(SYNC.go),
         { type: 'goto', cell: GATHER[i % GATHER.length] },
-        { type: 'set', state: 'thinking', text: SYNC.here },
+        activity(SYNC.here),
         { type: 'wait', t: dur },
         { type: 'goto', cell: a.seat },
         { type: 'sit' },
@@ -189,7 +210,7 @@ export class Simulation {
 
     if (type === 'sync') {
       if (immediate) return true;
-      return this.runSync({ demo: false });
+      return this.runSync({ demo: false, ts: ev.ts });
     }
 
     const a = this.find(ev.agent);
@@ -205,6 +226,7 @@ export class Simulation {
     a.eventEpoch = ev.epoch ?? null;
     a.lastSeenTs = ts;
     a.demoActive = false;
+    updatePresence(a, { ...this.freshness, nowSec: Date.now() / 1000 });
 
     if (type === 'presence') {
       a.snapToSeat();
@@ -214,10 +236,12 @@ export class Simulation {
     if (type === 'status') {
       const text = ev.text || STATES[ev.state].label;
       a.lastStatusTs = Number(ev.ts) || ts;
+      updatePresence(a, { ...this.freshness, nowSec: Date.now() / 1000 });
       if (!immediate && ev.state === 'idle' && a.state === 'idle') {
         const busy = Boolean(a.ambient || a.cur || a.script.length);
         const away = a.cell[0] !== a.seat[0] || a.cell[1] !== a.seat[1];
-        if (busy || !away) {
+        const taskActivity = a.activityKind || a.script.some((step) => step.type === 'activity' && step.kind);
+        if (!taskActivity && (busy || !away)) {
           if (text && text !== a.text) {
             a.text = text;
             this.log(a, text, { demo: false, ts: ev.ts });
@@ -246,24 +270,22 @@ export class Simulation {
     if (type === 'handoff') {
       const target = this.find(ev.to);
       if (!target || target === a) return false;
-      const state = STATES[ev.state] ? ev.state : 'thinking';
       const text = ev.text || `把材料交给 ${target.name}`;
       if (immediate) {
         a.snapToSeat();
         return true;
       }
-      const prev = { state: a.state, text: a.text };
       this.log(a, text, { demo: false, ts: ev.ts });
       a.interrupt([
-        { type: 'set', state, text: `去 ${target.name} 工位` },
+        { type: 'activity', kind: 'handoff', label: `去 ${target.name} 工位` },
         { type: 'carry', on: true },
         { type: 'goto', cell: target.visit },
-        { type: 'set', state, text },
+        { type: 'activity', kind: 'handoff', label: text },
         { type: 'wait', t: 2.2 },
         { type: 'carry', on: false },
         { type: 'goto', cell: a.seat },
         { type: 'sit' },
-        { type: 'set', ...prev },
+        { type: 'activity' },
       ]);
       return true;
     }

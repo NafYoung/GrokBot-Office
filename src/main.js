@@ -5,7 +5,7 @@ import { Agent } from './agent.js';
 import { Simulation, SYNC } from './sim.js';
 import { createRenderer, lightKey, makeLight, lerpLight } from './render.js';
 import { createUI } from './ui.js';
-import { classifyPresence, parseFreshnessParams } from './presence.js';
+import { parseFreshnessParams } from './presence.js';
 import { setupIntegration } from './integration.js';
 
 const freshness = parseFreshnessParams(location.search, FRESHNESS);
@@ -17,20 +17,22 @@ let tod = 'now';
 const light = makeLight(lightKey(tod));
 let es = null;
 let generation = 0;
+let retryTimer = null;
+let retryDelay = 1000;
+let sessionAbort = null;
 
 function refreshPresence(nowSec = Date.now() / 1000) {
-  for (const a of agents) {
-    a.presence = classifyPresence({
-      contact: a.cfg.contact, lastSeenTs: a.lastSeenTs, nowSec,
-      ...freshness, demo: ui.mode === 'demo',
-    });
-  }
+  sim.refreshPresence(nowSec);
 }
 
 function closeLive() {
   generation++;
   es?.close();
   es = null;
+  clearTimeout(retryTimer);
+  retryTimer = null;
+  sessionAbort?.abort();
+  sessionAbort = null;
 }
 
 const ui = createUI(agents, {
@@ -48,7 +50,7 @@ const ui = createUI(agents, {
 });
 
 const sim = new Simulation({
-  agents,
+  agents, freshness,
   onLog: (e) => {
     if (Boolean(e.demo) !== (ui.mode === 'demo')) return;
     ui.addLog(e);
@@ -79,7 +81,7 @@ function restoreOffice(data) {
   for (const ev of (data.recent || []).slice(-50)) {
     const agent = byId[ev.agent] || (ev.type === 'sync' ? sim.convene() : null);
     if (!agent) continue;
-    const text = ev.text || (ev.type === 'sync' ? SYNC.log
+    const text = ev.text || (ev.type === 'sync' ? SYNC.liveLog
       : ev.type === 'handoff' ? `把材料交给 ${byId[ev.to]?.name || ev.to}`
         : STATES[ev.state]?.label);
     ui.addLog({ agent, text, demo: false, ts: ev.ts });
@@ -101,11 +103,30 @@ async function startLive() {
   closeLive();
   const current = generation;
   const active = () => current === generation && ui.mode === 'live';
+  const retry = () => {
+    if (!active() || retryTimer != null) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      if (active()) startLive();
+    }, retryDelay);
+    retryDelay = Math.min(retryDelay * 2, 15000);
+  };
+  const readSession = async () => {
+    const controller = new AbortController();
+    sessionAbort = controller;
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      const response = await fetch('/api/session', { signal: controller.signal });
+      if (!response.ok) throw new Error('session unavailable');
+      return await response.json();
+    } finally {
+      clearTimeout(timeout);
+      if (sessionAbort === controller) sessionAbort = null;
+    }
+  };
   ui.setFeed('connecting');
   try {
-    const response = await fetch('/api/session');
-    if (!response.ok) throw new Error('session unavailable');
-    const session = await response.json();
+    const session = await readSession();
     if (!active()) return;
     if (!session.authenticated) { requireLogin(); return; }
     if (!window.EventSource) { ui.setFeed('noserver'); return; }
@@ -117,19 +138,29 @@ async function startLive() {
       if (active()) onLiveEvent(JSON.parse(e.data));
     });
     es.addEventListener('auth-required', () => { if (active()) requireLogin(); });
-    es.onopen = () => { if (active()) ui.setFeed('open'); };
+    let probing = false;
+    es.onopen = () => {
+      if (!active()) return;
+      clearTimeout(retryTimer);
+      retryTimer = null;
+      retryDelay = 1000;
+      ui.setFeed('open');
+    };
     es.onerror = async () => {
       if (!active()) return;
       ui.setFeed('closed');
+      // 网络中断由 EventSource 重连；HTTP 错误等使它彻底关闭时重新建立连接。
+      if (es.readyState === EventSource.CLOSED) retry();
+      if (probing) return;
+      probing = true;
       try {
-        const response = await fetch('/api/session');
-        if (!response.ok) return;
-        const session = await response.json();
+        const session = await readSession();
         if (active() && !session.authenticated) requireLogin();
       } catch { /* EventSource 自行重连，保留上次状态及其新鲜度。 */ }
+      finally { probing = false; }
     };
   } catch {
-    if (active()) ui.setFeed('noserver');
+    if (active()) { ui.setFeed('noserver'); retry(); }
   }
 }
 

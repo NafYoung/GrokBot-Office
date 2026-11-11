@@ -1,5 +1,6 @@
 // 空闲生活只控制动作，不改工作状态、新鲜度或真实任务日志。
 import { COFFEE, LOUNGE, STRETCH, STROLL } from './config.js';
+import { hasFreshTask } from './presence.js';
 
 export const LOAF = {
   coffee: { go: '去接杯咖啡', doing: '慢慢喝咖啡', back: '端着咖啡回工位', prop: 'cup', dwell: [6, 10] },
@@ -11,7 +12,7 @@ export const LOAF = {
 export const LOAF_SPOTS = { coffee: COFFEE, stretch: STRETCH, lounge: LOUNGE, stroll: STROLL };
 
 export function canLoaf(agent) {
-  if (!agent || agent.presence !== 'fresh' || agent.state !== 'idle') return false;
+  if (!agent || !hasFreshTask(agent) || agent.state !== 'idle') return false;
   if (agent.lastStatusTs == null) return false;
   if (agent.cfg?.kind === 'on_demand' && agent.lastSeenTs == null) return false;
   return true;

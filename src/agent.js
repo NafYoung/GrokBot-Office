@@ -47,6 +47,8 @@ export class Agent {
     this.ambientLabel = '';
     this.ambientStage = null;
     this.ambientSpot = null;
+    this.activityLabel = '';
+    this.activityKind = null;
     this.lastLoaf = null;
     this.loafIn = null;
     this.lastTask = null;
@@ -57,6 +59,7 @@ export class Agent {
     this.phase = (cfg.id.charCodeAt(0) % 7) * 0.9;
     this.lastSeenTs = null;
     this.lastStatusTs = null;
+    this.taskPresence = 'unknown';
     this.lastEventSeq = null;
     this.eventEpoch = null;
     this.presence = cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
@@ -76,6 +79,8 @@ export class Agent {
     this.ambientLabel = '';
     this.ambientStage = null;
     this.ambientSpot = null;
+    this.activityLabel = '';
+    this.activityKind = null;
     this.path = [];
     this.script = [];
     this.cur = null;
@@ -87,6 +92,7 @@ export class Agent {
     this.text = '';
     this.lastSeenTs = null;
     this.lastStatusTs = null;
+    this.taskPresence = 'unknown';
     this.lastEventSeq = null;
     this.eventEpoch = null;
     this.presence = this.cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
@@ -103,6 +109,8 @@ export class Agent {
     this.ambientLabel = '';
     this.ambientStage = null;
     this.ambientSpot = null;
+    this.activityLabel = '';
+    this.activityKind = null;
   }
 
   interrupt(script) {
@@ -138,6 +146,10 @@ export class Agent {
       case 'set':
         this.state = a.state;
         this.text = a.text;
+        break;
+      case 'activity':
+        this.activityLabel = a.label || '';
+        this.activityKind = a.kind || null;
         break;
       case 'sit':
         this.seated = true;

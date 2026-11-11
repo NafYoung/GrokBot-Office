@@ -1,5 +1,6 @@
 // 圆润机器人：办公室人物与侧栏头像共用同一套造型，只读 Agent 状态。
 import { shade, muteHex } from './iso.js';
+import { hasFreshTask } from './presence.js';
 
 export const ROBOT_BOUNDS = { halfWidth: 20, height: 49 };
 
@@ -23,8 +24,8 @@ function palette(a) {
   return {
     active, accent,
     shell: active ? '#f1f5fa' : '#b8c1cd',
-    eyes: !active ? '#738498' : a.state === 'error' ? '#ff94a6'
-      : a.state === 'needsYou' ? '#ffdc88' : shade(accent, 1.68),
+    eyes: !active ? '#738498' : hasFreshTask(a) && a.state === 'error' ? '#ff94a6'
+      : hasFreshTask(a) && a.state === 'needsYou' ? '#ffdc88' : shade(accent, 1.68),
   };
 }
 
@@ -88,7 +89,7 @@ function drawHead(ctx, a, t, colors, portrait = false) {
   const blink = active && !portrait && ((t + a.phase * 0.71) % 4.8 < 0.12);
   const happy = active && a.ambientStage === 'doing';
   for (const x of [-4.5, 4.5]) {
-    if (active && a.state === 'error') {
+    if (hasFreshTask(a) && a.state === 'error') {
       line(ctx, [[x - 1.6, -2], [x + 1.6, 1.5]], eyes, 1.6);
       line(ctx, [[x + 1.6, -2], [x - 1.6, 1.5]], eyes, 1.6);
     } else if (!active || blink) {
@@ -97,11 +98,11 @@ function drawHead(ctx, a, t, colors, portrait = false) {
       ctx.beginPath(); ctx.arc(x, 1, 2, Math.PI + .15, Math.PI * 2 - .15);
       ctx.strokeStyle = eyes; ctx.lineWidth = 1.7; ctx.lineCap = 'round'; ctx.stroke();
     } else {
-      round(ctx, x - 1.45, -2.5, 2.9, a.state === 'thinking' ? 3.5 : 5, 1.4, eyes);
-      if (a.state === 'needsYou') line(ctx, [[x - 1.8, -4], [x + 1.5, -4.8]], eyes, 0.9);
+      round(ctx, x - 1.45, -2.5, 2.9, hasFreshTask(a) && a.state === 'thinking' ? 3.5 : 5, 1.4, eyes);
+      if (hasFreshTask(a) && a.state === 'needsYou') line(ctx, [[x - 1.8, -4], [x + 1.5, -4.8]], eyes, 0.9);
     }
   }
-  if (active && a.state !== 'error') {
+  if (active && !(hasFreshTask(a) && a.state === 'error')) {
     ctx.beginPath(); ctx.moveTo(-2, 4); ctx.quadraticCurveTo(0, happy ? 6.5 : 5.5, 2, 4);
     ctx.strokeStyle = eyes; ctx.lineWidth = 1; ctx.stroke();
     if (happy) {

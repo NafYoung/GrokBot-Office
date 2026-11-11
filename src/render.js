@@ -1,6 +1,6 @@
 // 渲染器：把 world + agents 画到 canvas。只读状态，不改状态。
 import { GRID, DESKS, RUGS, WALLS, STATES, PRESENCE, FONT, OFFICE } from './config.js';
-import { shouldShowOnFloor } from './presence.js';
+import { shouldShowOnFloor, hasFreshTask } from './presence.js';
 import { drawRobot, ROBOT_BOUNDS } from './robot.js';
 import {
   TW, TH, ZU, P, box, cyl, blob, quad3, poly, ellipseFloor, shade, rgb, hexToRgb,
@@ -185,7 +185,7 @@ function plant(ctx, cx, cy, big) {
 }
 
 function liveWorking(ag) {
-  return ag && ag.seated && ag.presence === 'fresh' && WORKING.has(ag.state);
+  return ag && ag.seated && hasFreshTask(ag) && WORKING.has(ag.state);
 }
 
 function drawDesk(ctx, id, env) {
@@ -321,7 +321,7 @@ function drawAgent(ctx, a, t, env) {
   if (env.selectedId === a.id) {
     ellipseFloor(ctx, a.x, a.y, 0, 0.48, 0.48, null, 'rgba(226,232,240,0.9)', 2);
   }
-  if (a.presence === 'fresh' && (a.state === 'needsYou' || a.state === 'error')) {
+  if (hasFreshTask(a) && (a.state === 'needsYou' || a.state === 'error')) {
     const pulse = .5 + .5 * Math.sin(t * 5);
     ellipseFloor(ctx, a.x, a.y, 0, .42 + pulse * .1, .42 + pulse * .1, null,
       a.state === 'error' ? 'rgba(239,68,68,.9)' : 'rgba(251,146,60,.9)', 2);
@@ -350,10 +350,11 @@ function wrapText(ctx, text, maxWidth) {
 }
 
 function bubbleText(a) {
-  if (a.presence === 'fresh' && a.ambientLabel) return a.ambientLabel;
-  if (a.presence === 'fresh' && a.text) return a.text;
-  if (a.presence === 'fresh' && (a.state === 'needsYou' || a.state === 'error')) return STATES[a.state].label;
-  if (a.presence === 'stale' && a.text) return `过期 · ${a.text}`;
+  if (hasFreshTask(a) && a.ambientLabel) return a.ambientLabel;
+  if (a.presence === 'fresh' && a.activityLabel) return a.activityLabel;
+  if (hasFreshTask(a) && a.text) return a.text;
+  if (hasFreshTask(a) && (a.state === 'needsYou' || a.state === 'error')) return STATES[a.state].label;
+  if (['fresh', 'stale'].includes(a.presence) && a.text) return `过期 · ${a.text}`;
   return '';
 }
 

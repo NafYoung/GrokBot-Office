@@ -65,8 +65,21 @@ def run(screenshots=None):
             event_posts = []
             page.on("request", lambda request: event_posts.append(request.url)
                     if request.method == 'POST' and request.url.endswith('/api/events') else None)
+            # 页面加载成功但服务检查暂时失败，恢复后无需用户手动刷新。
+            startup_attempts = []
+            def fail_first_session(route):
+                startup_attempts.append(1)
+                if len(startup_attempts) == 1:
+                    route.fulfill(status=503, body='temporarily unavailable')
+                else:
+                    route.continue_()
+            page.route('**/api/session', fail_first_session)
             page.goto(base)
+            page.wait_for_function('window.office.ui.feed === "noserver"')
             page.locator('#authForm').wait_for(state='visible')
+            assert len(startup_attempts) >= 2
+            page.unroute('**/api/session', fail_first_session)
+            results['startup_retry'] = 'initial session failure retries automatically and reaches the login screen'
             assert page.evaluate('window.office.ui.feed') == 'locked'
             page.locator('#officeToken').fill('wrong')
             page.locator('#authForm button').click()
@@ -221,6 +234,62 @@ def run(screenshots=None):
             for name in ['desktop_live','desktop_demo']:
                 assert results[name]['activity']['height'] >= 120
                 assert not results[name]['cardsOverlap']
+
+            audit = context.new_page()
+            audit.on('pageerror', lambda error: errors.append(str(error)))
+            stream_attempts = []
+            def fail_first_stream(route):
+                stream_attempts.append(1)
+                if len(stream_attempts) == 1:
+                    route.fulfill(status=503, body='temporarily unavailable')
+                else:
+                    route.continue_()
+            audit.route('**/api/events/stream', fail_first_stream)
+            audit.goto(base + '/?stale=3&offline=30')
+            audit.wait_for_function('window.office.ui.feed === "open"')
+            assert len(stream_attempts) >= 2
+            results['stream_retry'] = 'HTTP 503 permanently closing EventSource is retried automatically'
+            publish({'agent':'shiyan','state':'coding','text':'过期后仍应保留的真实任务'})
+            state(audit, 'shiyan', 'coding')
+            audit.wait_for_function('window.office.agents.find(a=>a.id==="shiyan").taskPresence === "stale"')
+            publish({'type':'handoff','agent':'shiyan','to':'guan','text':'新的交接活动'})
+            audit.wait_for_function('''() => {
+              const a=window.office.agents.find(a=>a.id==='shiyan');
+              return a.presence==='fresh' && a.taskPresence==='stale' && a.activityKind==='handoff';
+            }''')
+            assert '在岗 · 任务状态过期' in audit.locator('li[data-id="shiyan"] .st').inner_text()
+            assert '过期后仍应保留的真实任务' in audit.locator('li[data-id="shiyan"] .tx').inner_text()
+            assert '0 工作中' in audit.locator('#stats').inner_text()
+            assert '新鲜任务状态' not in audit.locator('#feedBanner').inner_text()
+            audit.locator('li[data-id="shiyan"]').click()
+            assert '任务上报：' in audit.locator('#selected').inner_text()
+            shot(audit, 'stale-task-fresh-contact')
+            audit.reload()
+            audit.wait_for_function('window.office.ui.feed === "open" && window.office.agents.find(a=>a.id==="shiyan").lastStatusTs != null')
+            assert '在岗 · 任务状态过期' in audit.locator('li[data-id="shiyan"] .st').inner_text()
+            assert '0 工作中' in audit.locator('#stats').inner_text()
+            publish({'agent':'shiyan','state':'terminal','text':'新的真实任务状态'})
+            state(audit, 'shiyan', 'terminal')
+            assert '1 工作中' in audit.locator('#stats').inner_text()
+            results['task_freshness'] = 'handoff keeps task stale in scene, counts and restored snapshot; a real status makes it current'
+            audit.close()
+
+            pending = context.new_page()
+            pending.on('pageerror', lambda error: errors.append(str(error)))
+            failures = []
+            def fail_sessions(route):
+                failures.append(1)
+                route.fulfill(status=503, body='temporarily unavailable')
+            pending.route('**/api/session', fail_sessions)
+            pending.goto(base)
+            pending.wait_for_function('window.office.ui.feed === "noserver"')
+            pending.locator('#demoBtn').click()
+            before = len(failures)
+            pending.wait_for_timeout(1600)
+            assert len(failures) == before
+            assert pending.evaluate('window.office.ui.mode') == 'demo'
+            pending.close()
+            results['retry_cancellation'] = 'switching to demo cancels the pending live retry'
             assert not errors, errors
             results['page_errors']=errors
             browser.close()
