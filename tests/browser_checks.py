@@ -9,6 +9,7 @@ import socket
 import sys
 import threading
 from pathlib import Path
+from urllib.request import Request, urlopen
 
 from playwright.sync_api import sync_playwright
 
@@ -31,7 +32,13 @@ def run(screenshots=None):
     results = {}
 
     def publish(payload):
-        srv.hub.publish(srv.hub.validate(payload))
+        # 通过真实 HTTP 上报入口测试，再检查 SSE 和画面；不绕过认证及事件校验。
+        request = Request(base + '/api/events', data=json.dumps(payload).encode(), headers={
+            'Content-Type': 'application/json', 'Authorization': 'Bearer browser-test-token',
+        })
+        with urlopen(request, timeout=5) as response:
+            assert response.status == 202
+            assert json.load(response)['ok']
 
     def shot(page, name):
         if screenshots:
@@ -78,8 +85,18 @@ def run(screenshots=None):
             assert all('/api/office' not in url for url in requests)
             results['login'] = 'wrong token rejected; session unlocks SSE without storing token'
 
+            page.locator('#modeBadge').get_by_text('等待 Bot 上报', exact=True).wait_for()
+            assert '名单来自工位配置' in page.locator('#feedBanner').inner_text()
+            publish({'type':'handoff','agent':'eggbot','to':'grok','text':'只有在岗信息'})
+            page.locator('#modeBadge').get_by_text('等待任务状态', exact=True).wait_for()
+
             publish({'agent':'grok', 'state':'coding', 'text':'开始任务'})
             state(page, 'grok', 'coding')
+            page.locator('#modeBadge').get_by_text('已收到任务状态', exact=True).wait_for()
+            publish({'agent':'grok', 'state':'idle', 'text':'任务完成'})
+            state(page, 'grok', 'idle')
+            page.locator('#team li[data-id="grok"] .tx').get_by_text('任务完成', exact=False).wait_for()
+            results['http_to_gui'] = 'authenticated HTTP status reaches SSE and UI; configured names and handoff-only events do not imply task sync'
             publish({'type':'handoff','agent':'grok','to':'qiwen','text':'交接材料'})
             page.wait_for_function('window.office.agents[0].moving')
             publish({'agent':'grok','state':'error','text':'测试失败'})

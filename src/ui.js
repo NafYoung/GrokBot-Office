@@ -14,10 +14,8 @@ function kindLabel(kind) {
 }
 
 function contactNote(a) {
-  if (a.cfg.contact === 'unconnected' && a.lastSeenTs == null) {
-    return '席位保留，当前不在可联系名单';
-  }
-  if (a.presence === 'unknown') return '还没收到过事件';
+  if (a.lastSeenTs == null) return '名字和工位已配置，尚未收到这个 Bot 的上报。';
+  if (a.lastStatusTs == null) return '已收到在岗信息，尚未收到任务状态。';
   if (a.presence === 'stale') return '上次事件已超过新鲜度阈值';
   if (a.presence === 'offline') return '很久没有新事件，按离线显示';
   return a.role;
@@ -83,10 +81,23 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       badge = '连接中';
       feedText = '正在连接事件流…';
     } else {
-      const fresh = agents.some((a) => a.presence === 'fresh');
-      badge = fresh ? '实时' : '等待事件';
-      kind = fresh ? 'live' : '';
-      feedText = fresh ? '已连接 · 状态来自真实事件' : '已连接 · 还没有新鲜事件';
+      const freshTasks = agents.filter((a) => a.presence === 'fresh' && a.lastStatusTs != null);
+      const seen = agents.filter((a) => a.lastSeenTs != null);
+      if (freshTasks.length) {
+        badge = '已收到任务状态';
+        kind = 'live';
+        const latest = Math.max(...freshTasks.map((a) => a.lastSeenTs));
+        feedText = `办公室服务已连接 · ${freshTasks.length} 个 Bot 有新鲜任务状态 · 最近上报${formatAge(latest, Date.now() / 1000)}`;
+      } else if (seen.some((a) => a.presence === 'fresh')) {
+        badge = '等待任务状态';
+        feedText = '办公室服务已连接 · 收到 Bot 在岗信息，尚未收到任务状态';
+      } else if (seen.length) {
+        badge = '上报已过期';
+        feedText = '办公室服务已连接 · Bot 上报已过期，当前显示的是历史记录';
+      } else {
+        badge = '等待 Bot 上报';
+        feedText = '办公室服务已连接 · 尚未收到 Bot 上报；名单来自工位配置';
+      }
     }
     for (const id of ['modeBadge', 'ownerBadge']) {
       $(id).textContent = badge;
@@ -146,7 +157,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
     const cap = caption(a);
     const p = PRESENCE[a.presence] || PRESENCE.unknown;
     const age = formatAge(a.lastSeenTs, nowSec);
-    const work = a.text ? esc(a.text) : (a.presence === 'unconnected' ? '未连接' : '尚无工作内容');
+    const work = a.text ? esc(a.text) : '尚未收到任务上报';
     return `<li data-id="${esc(a.id)}" class="${selectedId === a.id ? 'on' : ''}">
       ${portrait(a)}
       <span class="nm">${esc(a.name)}<i>${esc(a.role)}</i></span>
@@ -173,7 +184,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
         </div>
       </div>
       <p class="sel-state"><i class="dot" style="background:${p.color}"></i>${esc(cap)} · ${esc(formatAge(a.lastSeenTs, nowSec))}</p>
-      <p class="sel-text">${esc(a.text || '没有最近工作描述')}</p>
+      <p class="sel-text">${esc(a.text || '尚未收到任务上报')}</p>
       ${a.ambientLabel ? `<p class="sel-loaf">摸鱼：${esc(a.ambientLabel)}</p>` : ''}
       <p class="muted sel-note">${esc(contactNote(a))}</p>`;
   }
