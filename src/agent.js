@@ -60,6 +60,9 @@ export class Agent {
     this.lastSeenTs = null;
     this.lastStatusTs = null;
     this.taskPresence = 'unknown';
+    this.tasks = [];
+    this.diagnostic = {};
+    this.runtime = null;
     this.lastEventSeq = null;
     this.eventEpoch = null;
     this.presence = cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
@@ -93,6 +96,9 @@ export class Agent {
     this.lastSeenTs = null;
     this.lastStatusTs = null;
     this.taskPresence = 'unknown';
+    this.tasks = [];
+    this.diagnostic = {};
+    this.runtime = null;
     this.lastEventSeq = null;
     this.eventEpoch = null;
     this.presence = this.cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';

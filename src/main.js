@@ -1,12 +1,13 @@
 // 默认是真实事件模式。初始快照和后续事件共用一条有序的 SSE 连接。
-import { AGENTS, FRESHNESS, STATES } from './config.js';
+import { AGENTS, FRESHNESS } from './config.js';
 import { World } from './world.js';
 import { Agent } from './agent.js';
-import { Simulation, SYNC } from './sim.js';
+import { Simulation } from './sim.js';
 import { createRenderer, lightKey, makeLight, lerpLight } from './render.js';
 import { createUI } from './ui.js';
 import { parseFreshnessParams } from './presence.js';
 import { setupIntegration } from './integration.js';
+import { eventText } from './telemetry.js';
 
 const freshness = parseFreshnessParams(location.search, FRESHNESS);
 setupIntegration();
@@ -36,6 +37,7 @@ function closeLive() {
 }
 
 const ui = createUI(agents, {
+  freshness,
   onMode: (m) => { tod = m; },
   onSelect: (id) => renderer.setSelected(id),
   onDemo: (on, kind = 'work') => {
@@ -69,7 +71,13 @@ canvas.addEventListener('click', (e) => {
 
 function onLiveEvent(ev, immediate = false) {
   if (ui.mode === 'demo') return;
-  if (!sim.applyEvent(ev, { immediate })) console.warn('[office] ignored event', ev);
+  const current = ev.type === 'handoff' ? { ...ev, tasks: ev.current?.tasks, diagnostic: ev.current?.diagnostic }
+    : ev.current || ev;
+  if (!sim.applyEvent(current, { immediate, quiet: true, keepPose: ev.silent })) console.warn('[office] ignored event', ev);
+  if (!immediate && !ev.silent && ev.type !== 'sync') {
+    const agent = byId[ev.agent];
+    if (agent) ui.addLog({ agent, text: eventText(ev), demo: false, ts: ev.ts });
+  }
   refreshPresence();
   ui.update();
 }
@@ -78,12 +86,11 @@ function restoreOffice(data) {
   sim.stop();
   ui.clearLog();
   for (const ev of data.last || []) onLiveEvent(ev, true);
+  ui.setTelemetry(data);
   for (const ev of (data.recent || []).slice(-50)) {
     const agent = byId[ev.agent] || (ev.type === 'sync' ? sim.convene() : null);
     if (!agent) continue;
-    const text = ev.text || (ev.type === 'sync' ? SYNC.liveLog
-      : ev.type === 'handoff' ? `把材料交给 ${byId[ev.to]?.name || ev.to}`
-        : STATES[ev.state]?.label);
+    const text = eventText(ev);
     ui.addLog({ agent, text, demo: false, ts: ev.ts });
   }
   refreshPresence();
@@ -136,6 +143,9 @@ async function startLive() {
     });
     es.addEventListener('event', (e) => {
       if (active()) onLiveEvent(JSON.parse(e.data));
+    });
+    es.addEventListener('telemetry', (e) => {
+      if (active()) { ui.setTelemetry(JSON.parse(e.data)); ui.update(); }
     });
     es.addEventListener('auth-required', () => { if (active()) requireLogin(); });
     let probing = false;

@@ -1,6 +1,59 @@
 # 把 Grokbot 应用的真实任务接到办公室
 
-办公室不是 Grokbot 的任务监听器。Bot 名单来自配置；只有执行任务的 Bot 主动调用上报工具，工位才有真实状态。
+办公室提供两种真实数据来源：**Bot 主动上报任务**，或**可选的运行主机只读采集**。默认不开启采集；仅打开办公室、认识 Bot 的名字或启用点击 Webhook，都不等于已经接通。工位仍来自配置，采集器只匹配已有工位。
+
+## 可选：从 Grokbot 运行主机自动采集
+
+此适配器参考社区项目 [grokbot-sdk](https://github.com/adam91holt/grokbot-sdk) 的主机网关协议，**不是 Grokbot 官方承诺稳定的公共 API**。官方产品入口见 [Grokbot 文档](https://cursor.com/docs/grok-bot)。应用版本可能不提供这些接口；不兼容时显示诊断，不猜测状态。
+
+它每隔 15 秒读取一次 `listAgents`，对匹配的 Bot 再读取 `getAsyncTasks` 和 `getSubagents`。读取正在运行、正在编写回复、等待用户确认、后台任务及子智能体状态。主 Bot 空闲不会掩盖成员或后台任务。它不发送聊天、不创建 Bot、不读取聊天记录，也不从上一条聊天猜当前任务。
+
+**前提是你能访问真正运行 Bot 的主机网关。** 桌面 App 所在的 Mac 不一定是运行主机。云端网关的 `127.0.0.1` 也不是你的 Mac；需要已有的安全连接，例如 SSH 本机端口转发，或带认证的 HTTPS 网关。本项目不会自动打开公网端口、创建隧道或查找账号凭据。
+
+### 方式 A：办公室能访问网关地址
+
+在办公室电脑保存 `~/.config/grokbot-office/gateway.json`：
+
+```json
+{
+  "gatewayUrl": "http://127.0.0.1:19090",
+  "tokenFile": "gateway.token",
+  "intervalSeconds": 15,
+  "mappings": {}
+}
+```
+
+`19090` 只是示例，必须替换为实际已建立的本机转发端口。将已有网关口令保存在同目录的 `gateway.token`，不把口令发到聊天或提交 Git。也支持环境变量 `GROKBOT_GATEWAY_TOKEN`。网关口令与办公室 `OFFICE_TOKEN` 是两套独立凭据。
+
+### 方式 B：办公室与网关在同一运行主机
+
+如果已知道网关发现文件的实际位置，可用下面配置替代方式 A：
+
+```json
+{
+  "discoveryFile": "/实际运行主机路径/sand-data/gateway.json",
+  "intervalSeconds": 15,
+  "mappings": {}
+}
+```
+
+发现文件需含 `port`，并通过文件中的 `token`、独立 `tokenFile` 或环境变量提供口令。适配器只读取你明确指定的文件，不扫描磁盘或凭据库。不要把云端文件路径直接当作 Mac 的路径。不同地址的 `gatewayUrl` 和 `discoveryFile` 不能混用。
+
+### 启动与匹配
+
+```bash
+python3 server.py --port 8788 --grokbot-config ~/.config/grokbot-office/gateway.json
+```
+
+亦可用 `OFFICE_GROKBOT_CONFIG` 指定配置路径。配置文件每轮重读，修改匹配不需要重启。停止服务也会停止采集。
+
+默认按已有显示名或别名精确匹配，忽略群聊。不同原生 Bot 同名时不猜测归属；在 `mappings` 中用**真实原生 ID**显式绑定到工位 ID，例如 `{"实际原生ID":"guan"}`。显式绑定优先，未绑定的同名 Bot 不会占用该工位。未知成员显示在诊断里，不会塞给主 Bot。
+
+网页右侧「连接诊断 · 自动采集」显示等待配置、连接中、已连接、部分未同步或采集异常，并列出未匹配和重名成员。点击成员查看本次来源、联系时间、任务时间和拒绝记录。服务不可达或字段不兼容时保留最后一次有效观察，随后正常过期，不生成“已完成”或虚假空闲。
+
+主机只确认忙闲但未提供具体任务时，页面会明确写“未提供具体任务内容”。需要准确摘要与完成记录时，继续使用下面的任务上报。主机观察与带编号任务独立保存：主机空闲不会替一个未结束的任务生成成功记录。若所有进行中任务都已过期，角色可依据新鲜的主机观察活动，旧任务仍保留过期标记并等待真实终态。
+
+**本仓库测试使用隔离的模拟网关，不代表已经连接你的 Grokbot 账号。** 实际验收：诊断显示主机已连接、目标 Bot 已匹配，然后在 App 给该 Bot 发任务，核对它自己的工位从等待到忙碌，再回到确认空闲。
 
 ## 先使用页面生成接入规则
 
@@ -57,6 +110,37 @@ python3 office_report.py --url http://127.0.0.1:8788 agents
 `report` 也接受 `type: handoff`（需要 `to`，自己的 `agent` 可由专属命令补入）。没有 `--agent` 的通用命令另支持 `type: sync`；专属命令不发起全员会议。点击工位的 `action: ping` 不属于任务事件，上报器会拒绝它。
 
 当前名单由 `/api/agents` 返回。`nafyoung的知识库` 是 `zhishiku` 的别名，`JD调研` 是 `diaoyan` 的别名。Python Roadmap、论文证据核对员已撤席；没有工位的其他 Bot 不能映射到别人。
+
+## 带编号的多任务协议
+
+原来的 `status`、`handoff`、`sync` 保持兼容。新接入建议通过同一 `POST /api/events` 或 `office_report.py report` 发送 `task`：
+
+```json
+{"type":"task","agent":"guan","taskId":"本次任务的UUID","eventId":"本次事件的UUID","phase":"started","revision":1,"state":"browsing","text":"实际任务摘要"}
+```
+
+上例中的两个中文占位符必须换成真正的 UUID（可通过 `python3 -c 'import uuid; print(uuid.uuid4())'` 生成）。同一任务沿用 `taskId`，每次更新使用新的 `eventId`、递增 `revision`；同一事件重试保留原 ID、revision 和内容。不同任务使用不同 taskId。ID 仅允许 ASCII 字母、数字、下划线、点、冒号、短横线，最长 128 字符。
+
+| phase | 含义 | state |
+|---|---|---|
+| `started` | 开始一项新任务 | 可选，默认 thinking |
+| `progress` | 更新这项任务 | 可选，coding / browsing / terminal / thinking |
+| `waiting` | 等待用户回复或确认 | 省略，自动 needsYou |
+| `completed` | 真实完成 | 省略 |
+| `failed` | 真实失败 | 省略 |
+| `cancelled` | 真实取消 | 省略 |
+
+完成任务 A 不会清除仍进行的任务 B。优先展示有新鲜上报的任务，其中等待确认优先，其他任务在详情中分别列出；每项任务独立显示更新时间及过期提示。所有任务结束后回到 idle；最后一项失败显示 error。新一轮执行必须换 taskId，结束的任务不能继续 progress。旧版 `status: idle` 不会清除未结束的有编号任务。请由原上报方发送真实终态，不能靠刷新页面消除旧任务。
+
+同一 revision 或更小版本不会回退任务；服务返回 `ignored: true`、`reason: outdated_revision`。重复 eventId 且内容相同返回 `duplicate: true`，不刷新任务或联系时间；相同 eventId 改内容返回 HTTP 409。没有开始就完成、试图重新激活已结束任务也返回 409。
+
+`source` 可选，默认 `reporter`；外部适配器使用 `external`，内置采集使用 `grokbot-gateway`。任务按 Bot + source + taskId 隔离，来源是标记，不代表额外授权。所有源共用办公室事件认证。
+
+`heartbeat` 事件只需 `type` 和 `agent`，只更新联系时间，不刷新任务、不记入活动列表。相同来源重复观察到同样状态也不刷屏，但实际重新观察可以更新它的状态时间。不要用定时器重放旧任务冒充新进展。
+
+任务、幂等确认、诊断随现有状态文件一起保存。每 Bot 最多 32 个未结束任务、40 条结束详情，全局保留最近 4096 个已归档任务 ID 和 512 个事件确认；这不是无限历史审计系统。taskId/eventId 始终使用新 UUID，避免重用已超出保留范围的旧 ID。详情最多显示最近 12 项，完整保留记录在受认证保护的 `/api/office`；`/api/diagnostics` 返回每 Bot 连接诊断及采集器状态。
+
+诊断仅记录服务实际接收的事件。未经认证的请求不会改写 Bot 诊断；请求根本没到办公室时，页面不能知道是发送端未配置、无权限还是断网。请结合采集器错误或上报器返回结果排查。
 
 ## 只有主 Bot 更新时
 

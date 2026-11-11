@@ -9,3 +9,7 @@ node_modules/
 .DS_Store
 data/office-state.json
 data/*.tmp
+
+# Local gateway credentials and adapter configuration
+gateway.token
+grokbot-gateway.local.json

@@ -100,7 +100,9 @@ class OfficeClient:
             if exc.code == 404:
                 raise ReportError('办公室接口不存在：请检查端口，并更新代码、重启 server.py。') from exc
             if exc.code == 422:
-                raise ReportError('事件被拒绝：请用 agents 命令核对当前 Bot 名单，检查 state 和 text；已撤席 Bot 不能上报。') from exc
+                raise ReportError('事件被拒绝：请用 agents 核对 Bot 名单，检查状态、任务编号、阶段和 revision；已撤席 Bot 不能上报。') from exc
+            if exc.code == 409:
+                raise ReportError('任务顺序或 eventId 冲突：先发送 started，后续递增 revision；新任务使用新 taskId，同一 eventId 不得换内容。') from exc
             if 300 <= exc.code < 400:
                 raise ReportError('办公室返回重定向，已停止发送口令；请使用最终服务地址。') from exc
             raise ReportError(f'办公室返回 HTTP {exc.code}，本次上报未确认成功。') from exc
@@ -125,10 +127,10 @@ class OfficeClient:
         return self.request('/api/agents')
 
     def report(self, payload):
-        if not isinstance(payload, dict) or payload.get('type', 'status') not in ('status', 'handoff', 'sync'):
-            raise ReportError('需要一条 status、handoff 或 sync 事件 JSON；点击工位的 ping 不是任务状态。')
-        if set(payload) - {'type', 'agent', 'state', 'text', 'to'}:
-            raise ReportError('事件仅允许 type、agent、state、text、to 字段。')
+        if not isinstance(payload, dict) or payload.get('type', 'status') not in ('status', 'handoff', 'sync', 'task', 'heartbeat'):
+            raise ReportError('需要一条 status、handoff、sync、task 或 heartbeat 事件 JSON；点击工位的 ping 不是任务状态。')
+        if set(payload) - {'type', 'agent', 'state', 'text', 'to', 'taskId', 'eventId', 'phase', 'revision', 'source', 'nativeId'}:
+            raise ReportError('事件包含未支持的字段，请按 GROKBOT.md 中的事件协议上报。')
         if self.agent:
             if payload.get('type') == 'sync':
                 raise ReportError('专属上报命令用于此 Bot 的状态或交接，不能用来发起全员会议。')
@@ -142,7 +144,8 @@ class OfficeClient:
         if result.get('ok') is not True or not isinstance(result.get('event'), dict):
             raise ReportError('未收到有效的事件确认，不能声明同步成功。')
         event = result['event']
-        return {'ok': True, 'agent': event.get('agent'), 'state': event.get('state'), 'seq': event.get('seq')}
+        return {'ok': True, **{key: event[key] for key in (
+            'agent', 'state', 'seq', 'taskId', 'revision', 'phase', 'duplicate', 'ignored', 'reason') if key in event}}
 
 
 def main(argv=None):

@@ -54,9 +54,16 @@
         <button type="submit">解锁办公室</button>
         <p id="authMessage" role="alert"></p>
       </form>
+      <details class="card connection-card" id="connectionCard">
+        <summary>连接诊断 · 自动采集</summary>
+        <div id="connectionStatus"></div>
+        <p class="hint">点一个 Bot 查看它的任务记录、上报来源和连接问题。</p>
+        <div id="connectionBots"></div>
+        <p class="hint">自动采集需配置可达的 Grokbot 主机网关。启动方法见仓库 GROKBOT.md；口令只保存在本机文件或环境变量中。</p>
+      </details>
       <details class="card integration-card" id="integrationCard">
         <summary>连接 Grokbot 的真实任务</summary>
-        <p class="hint">每个 Bot 都需单独配置。只给主 Bot 保存规则，不会自动同步其他成员。</p>
+        <p class="hint">主动上报方式：每个 Bot 单独保存规则。也可在“连接诊断”中查看主机自动采集；只给主 Bot 保存规则不会连接其他成员。</p>
         <label for="integrationAgent">选择要连接的 Bot</label>
         <select id="integrationAgent"><option value="">请选择一个 Bot</option></select>
         <button type="button" id="generateIntegration">生成接入指令</button>

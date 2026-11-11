@@ -204,7 +204,7 @@ export class Simulation {
   }
 
   // immediate: 刷新页面恢复快照时直接坐回工位，不要集体走一遍路
-  applyEvent(ev, { immediate = false } = {}) {
+  applyEvent(ev, { immediate = false, quiet = false, keepPose = false } = {}) {
     const type = ev.type || 'status';
     const ts = Number(ev.seen || ev.ts) || (Date.now() / 1000);
 
@@ -219,17 +219,19 @@ export class Simulation {
     if (type === 'status' && !STATES[ev.state]) return false;
     if (type === 'handoff' && (!this.find(ev.to) || this.find(ev.to) === a)) return false;
     if (!['status', 'handoff', 'presence'].includes(type)) return false;
-    if (type === 'presence' && !immediate) return false;
     if (Number.isSafeInteger(ev.seq) && (ev.epoch ?? null) === a.eventEpoch && a.lastEventSeq != null && ev.seq <= a.lastEventSeq) return true;
     if (!Number.isSafeInteger(ev.seq) && a.lastSeenTs != null && ts < a.lastSeenTs) return true;
     a.lastEventSeq = Number.isSafeInteger(ev.seq) ? ev.seq : null;
     a.eventEpoch = ev.epoch ?? null;
     a.lastSeenTs = ts;
     a.demoActive = false;
+    if (Array.isArray(ev.tasks)) a.tasks = ev.tasks;
+    if (ev.diagnostic) a.diagnostic = ev.diagnostic;
+    if ('runtime' in ev) a.runtime = ev.runtime;
     updatePresence(a, { ...this.freshness, nowSec: Date.now() / 1000 });
 
     if (type === 'presence') {
-      a.snapToSeat();
+      if (immediate) a.snapToSeat();
       return true;
     }
 
@@ -237,6 +239,7 @@ export class Simulation {
       const text = ev.text || STATES[ev.state].label;
       a.lastStatusTs = Number(ev.ts) || ts;
       updatePresence(a, { ...this.freshness, nowSec: Date.now() / 1000 });
+      if (keepPose && !immediate && a.state === ev.state && a.text === text) return true;
       if (!immediate && ev.state === 'idle' && a.state === 'idle') {
         const busy = Boolean(a.ambient || a.cur || a.script.length);
         const away = a.cell[0] !== a.seat[0] || a.cell[1] !== a.seat[1];
@@ -244,7 +247,7 @@ export class Simulation {
         if (!taskActivity && (busy || !away)) {
           if (text && text !== a.text) {
             a.text = text;
-            this.log(a, text, { demo: false, ts: ev.ts });
+            if (!quiet) this.log(a, text, { demo: false, ts: ev.ts });
           }
           return true;
         }
@@ -259,7 +262,7 @@ export class Simulation {
       // 工作状态与日志立即生效；回座位只负责表现，不延迟错误或待办提醒。
       a.state = ev.state;
       a.text = text;
-      this.log(a, text, { demo: false, ts: ev.ts });
+      if (!quiet) this.log(a, text, { demo: false, ts: ev.ts });
       a.interrupt([
         { type: 'goto', cell: a.seat },
         { type: 'sit' },
@@ -275,7 +278,7 @@ export class Simulation {
         a.snapToSeat();
         return true;
       }
-      this.log(a, text, { demo: false, ts: ev.ts });
+      if (!quiet) this.log(a, text, { demo: false, ts: ev.ts });
       a.interrupt([
         { type: 'activity', kind: 'handoff', label: `去 ${target.name} 工位` },
         { type: 'carry', on: true },

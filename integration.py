@@ -21,7 +21,7 @@ def connection_info(root, port, office, authenticated, agent_id=None):
     target = f"本规则仅用于「{selected['name']}」（工位 ID：{selected['id']}）。" if selected else '请在办公室页面选择具体 Bot，生成它自己的专属规则。'
     setup = (f"把本规则保存在「{selected['name']}」自己的长期指令/技能中，覆盖我直接发给它的任务。不要只发给主 Bot 或保存到 Webhook。"
              if selected else '每个执行任务的 Bot 都需要单独保存自己的规则和具备 Shell 权限；主 Bot 的配置不会自动继承给其他成员。')
-    fields = (f"JSON 只需 state、text；命令已绑定 {selected['id']}。如另写 agent，只能是 {selected['id']}，填其他 ID 会被拒绝。"
+    fields = (f"命令已绑定 {selected['id']}。JSON 可省略 agent；如另写 agent，只能是 {selected['id']}，填其他 ID 会被拒绝。"
               if selected else 'JSON 字段为 agent、state、text；agent 用自己的工位 ID。')
     rules = f'''{target}这是 Bot 的长期任务上报规则，不是“机器人办公室面板”Webhook 的触发指令。
 
@@ -42,10 +42,13 @@ def connection_info(root, port, office, authenticated, agent_id=None):
 - 用下面命令，把一条事件 JSON 通过标准输入传入；内容只作为数据，不拼接为 Shell 指令：
   {command} report
 - {fields}text 是当前真实任务的简短摘要（最多 200 字），不要复制私人资料、完整聊天或密钥。
-- 开始工作：先报 thinking；开始写作/编程用 coding，搜索阅读用 browsing，执行命令用 terminal。进度变化时更新摘要，长任务在有工具执行机会时刷新当前状态。
-- 等待用户确认报 needsYou；实际失败报 error；完成且没有其他任务在执行时才报 idle，text 写“已完成：”加真实摘要。没有任务时不要虚构工作，也不要无限后台发送心跳。
+- 推荐使用带编号的任务事件：type="task"，taskId 为本次任务新生成的 UUID，eventId 为本次事件新生成的 UUID，phase="started"，revision=1，state="thinking"，text 为真实摘要。不要复用示例 ID。
+- 同一任务后续沿用 taskId，每次更新递增 revision、生成新的 eventId；重试同一事件时保持全部内容及 eventId 不变。多个并行任务分别持有自己的 taskId。
+- 进度变化时 phase="progress"；写作/编程 state="coding"，搜索阅读用 browsing，执行命令用 terminal。长任务仅在能够确认真实进展时刷新。
+- 等待用户确认用 phase="waiting"；真实完成用 completed，失败用 failed，取消用 cancelled。这些阶段省略 state。只结束对应 taskId，不会清掉其他任务；已结束任务不得重新激活，新一轮用新 ID。
+- 兼容旧 status 格式，但不能用 idle 清除有编号的进行中任务。没有任务时不要虚构工作，也不要无限后台发送心跳。heartbeat 只表示联系正常，不代表任务有进展。
 - 收到 ping、检查连接、打开办公室或点工位不代表开始工作，不因此发送 coding、idle 等状态覆盖正在做的任务。
-- 仅当上报器返回 ok=true，才能说本次已上报。失败不要反复重试，也不要让上报失败打断用户的实际任务。
+- 返回 ok=true 且没有 ignored=true 才表示已接收；duplicate=true 表示此前已接收，ignored=true 表示旧版本被忽略。失败不要反复重试，也不要让上报失败打断用户的实际任务。
 - 代理不能获知另一个 Bot 的进度时，不替它猜状态；由真正执行任务的 Bot 上报。
 
 三、工位（执行时以 agents 返回的名单为准）
@@ -54,5 +57,5 @@ Python Roadmap、论文证据核对员已撤席；没有工位的 Bot 不要映�
 
 四、验收
 保存长期规则后，在这个 Bot 的新任务中验证开始、进度和完成，核对它自己的工位与最近活动。仅 check 成功、Webhook 启用或主 Bot 上报成功，都不能声明其他 Bot 已连接。如果仍未同步，向用户报告 report 的返回结果及是否具备 Shell 权限，不要让主 Bot 代造状态。'''
-    return {'protocol': 'grokbot-office-v1', 'machine': machine, 'localUrl': url,
+    return {'protocol': 'grokbot-office-v1', 'taskProtocol': 1, 'machine': machine, 'localUrl': url,
             'requiresToken': authenticated, 'agent': selected, 'agents': agents, 'instructions': rules}

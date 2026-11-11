@@ -26,13 +26,14 @@ from http.cookies import SimpleCookie, CookieError
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlsplit
 from integration import connection_info
+from task_state import TaskStore, TaskConflict, PHASES, SOURCES
 
 ROOT = Path(__file__).resolve().parent
 STATE_PATH = ROOT / "data" / "office-state.json"
 
 # 必须和 src/config.js 的 STATES 一致（tests/test_server.py 会检查）
 STATES = ("coding", "browsing", "terminal", "needsYou", "thinking", "error", "idle")
-EVENT_TYPES = ("status", "handoff", "sync")
+EVENT_TYPES = ("status", "handoff", "sync", "task", "heartbeat")
 MAX_BODY = 16 * 1024
 MAX_TEXT = 200
 MAX_RECENT = 80
@@ -173,6 +174,12 @@ class Hub:
         self.last = {}  # agent_id -> 最近一条 status，或只有交接的 presence
         self.last_seen = {}  # agent_id -> unix ts
         self.recent = deque(maxlen=MAX_RECENT)
+        self.tasks = TaskStore()
+        self.runtime = {}  # independent observations; never claim tracked tasks completed
+        self.diagnostics = {}
+        self.receipts = {}  # bounded idempotency receipts, persisted with task state
+        self.connector = {'state': 'not_configured', 'kind': 'grokbot-gateway', 'lastSuccessAt': None,
+                          'message': '尚未配置 Grokbot 主机自动采集；可继续使用 Bot 主动上报。'}
         self.sequence = 0
         self.epoch = secrets.token_hex(16)
         self.subscribers = set()
@@ -199,7 +206,7 @@ class Hub:
         if not isinstance(payload, dict):
             raise EventError(400, "body must be a JSON object")
         etype = payload.get("type", "status")
-        if etype not in EVENT_TYPES:
+        if not isinstance(etype, str) or etype not in EVENT_TYPES:
             raise EventError(422, f"unknown type {etype!r}", types=list(EVENT_TYPES))
         event = {"type": etype, "ts": time.time()}
         if etype == "sync":
@@ -219,6 +226,16 @@ class Hub:
         if agent is None:
             raise EventError(422, f"unknown agent {raw_agent!r}", agents=known)
         event["agent"] = agent
+        source = payload.get('source', 'reporter')
+        if not isinstance(source, str) or source not in SOURCES:
+            raise EventError(422, 'source must be reporter, external or grokbot-gateway')
+        event['source'] = source
+        for field in ('eventId', 'taskId', 'nativeId'):
+            value = payload.get(field)
+            if value is not None:
+                if not isinstance(value, str) or not re.fullmatch(r'[\w.:-]{1,128}', value, re.ASCII):
+                    raise EventError(422, f'{field} must be a short identifier')
+                event[field] = value
 
         text = payload.get("text", "")
         if not isinstance(text, str) or len(text) > MAX_TEXT:
@@ -226,8 +243,24 @@ class Hub:
         event["text"] = text.strip()
 
         state = payload.get("state")
-        if etype == "status":
-            if state not in STATES:
+        if etype == 'heartbeat':
+            # A heartbeat proves contact, not progress on any task.
+            return event
+        if etype == 'task':
+            phase = payload.get('phase')
+            revision = payload.get('revision')
+            if (not isinstance(phase, str) or phase not in PHASES or not event.get('taskId') or not event.get('eventId')
+                    or type(revision) is not int or not 1 <= revision <= 2**53 - 1):
+                raise EventError(422, 'task requires taskId, eventId, phase and positive integer revision')
+            if state is not None and (not isinstance(state, str) or state not in STATES):
+                raise EventError(422, 'invalid task state')
+            if phase in ('started', 'progress') and state in ('idle', 'error', 'needsYou'):
+                raise EventError(422, 'use a lifecycle phase for waiting, failure or completion')
+            event.update(phase=phase, revision=revision)
+            if state is not None:
+                event['state'] = state
+        elif etype == "status":
+            if not isinstance(state, str) or state not in STATES:
                 raise EventError(422, f"state must be one of {list(STATES)}", states=list(STATES))
             event["state"] = state
         else:
@@ -245,28 +278,83 @@ class Hub:
                 raise EventError(422, "'to' must be a different known agent", agents=known)
             event["to"] = target
             if state is not None:
-                if state not in STATES:
+                if not isinstance(state, str) or state not in STATES:
                     raise EventError(422, f"state must be one of {list(STATES)}", states=list(STATES))
                 event["state"] = state
         return event
 
     def publish(self, event):
         with self.lock:
+            aid = event.get('agent')
+            receipt_key = '\x1f'.join((aid, event['source'], event['eventId'])) if event.get('eventId') else None
+            fingerprint = json.dumps({k: v for k, v in event.items() if k != 'ts'}, sort_keys=True, ensure_ascii=False)
+            if receipt_key in self.receipts:
+                previous = self.receipts[receipt_key]
+                if previous['fingerprint'] != fingerprint:
+                    raise EventError(409, 'eventId 已被其他内容使用。')
+                return {**previous['event'], 'duplicate': True}
+            if event['type'] == 'task':
+                try:
+                    verdict = self.tasks.check(event)
+                except TaskConflict as exc:
+                    raise EventError(409, str(exc)) from exc
+                if verdict == 'outdated':
+                    return {**event, 'ignored': True, 'reason': 'outdated_revision', 'seq': self.sequence}
+            old = self.last.get(aid, {})
+            if event.get('source') == 'grokbot-gateway' and event['type'] == 'status':
+                old = self.runtime.get(aid, {})
             self.sequence += 1
             event.update(seq=self.sequence, epoch=self.epoch, ts=time.time())
             ts = event["ts"]
+            if aid:
+                diag = self.diagnostics.setdefault(aid, {})
+                diag.update(lastAcceptedAt=ts, source=event['source'], nativeId=event.get('nativeId'),
+                            acceptedCount=diag.get('acceptedCount', 0) + 1)
+                if event['type'] in ('status', 'task'):
+                    diag['lastTaskReportAt'] = ts
+                if event['type'] == 'heartbeat':
+                    diag['lastHeartbeatAt'] = ts
+            if event['type'] == 'task':
+                self.tasks.apply(event)
+                task = self.tasks.items['\x1f'.join((aid, event['source'], event['taskId']))]
+                self.last[aid] = {'type': 'status', 'agent': aid, 'state': task['state'], 'text': task['text'],
+                                  'source': event['source'], 'ts': ts, 'seen': ts, 'seq': self.sequence, 'epoch': self.epoch}
+                self.last_seen[aid] = ts
             if event["type"] == "status":
+                if event['source'] == 'grokbot-gateway':
+                    self.runtime[aid] = {k: event[k] for k in ('state', 'text', 'ts', 'source')}
                 stored = dict(event)
                 stored["seen"] = ts
                 self.last[event["agent"]] = stored
                 self.last_seen[event["agent"]] = ts
-            elif event["type"] == "handoff":
+            elif event["type"] in ("handoff", "heartbeat"):
                 self.last_seen[event["agent"]] = ts
                 stored = self.last.setdefault(event["agent"], {
                     "type": "presence", "agent": event["agent"], "ts": ts,
                 })
                 stored.update(seen=ts, seq=self.sequence, epoch=self.epoch)
-            self.recent.append(event)
+            if aid:
+                # Older status clients cannot clear a task that has no terminal event.
+                stale_after = self.office['freshness']['staleAfterSec']
+                task = self.tasks.current(aid, ts, stale_after)
+                if task:
+                    focus = {'state': task['state'], 'text': task['text'], 'ts': task['updatedAt'], 'source': task['source']}
+                    runtime = self.runtime.get(aid)
+                    if ts - task['updatedAt'] >= stale_after and runtime and ts - runtime['ts'] < stale_after:
+                        # Fresh observation may show real activity without falsely completing an old task.
+                        focus = dict(runtime)
+                    self.last[aid] = {'type': 'status', 'agent': aid, **focus,
+                                      'seen': ts, 'seq': self.sequence, 'epoch': self.epoch}
+                event['current'] = self._agent_snapshot_unlocked(aid)
+            event['silent'] = event['type'] == 'heartbeat' or (event['type'] == 'status'
+                and all(old.get(k) == event.get(k) for k in ('state', 'text', 'source')))
+            if not event['silent']:
+                self.recent.append({k: v for k, v in event.items() if k != 'current'})
+            if receipt_key:
+                self.receipts[receipt_key] = {'fingerprint': fingerprint,
+                    'event': {k: v for k, v in event.items() if k != 'current'}}
+                while len(self.receipts) > 512:
+                    del self.receipts[next(iter(self.receipts))]
             self._save_state_unlocked()
             for q in list(self.subscribers):
                 try:
@@ -279,14 +367,53 @@ class Hub:
                         except queue.Empty:
                             break
                     q.put_nowait(("snapshot", self._office_payload_unlocked()))
+            return event
+
+    def _agent_snapshot_unlocked(self, agent_id):
+        item = dict(self.last[agent_id])
+        item['seen'] = self.last_seen.get(agent_id, item.get('ts'))
+        item['epoch'] = self.epoch
+        item['tasks'] = self.tasks.for_agent(agent_id)
+        item['diagnostic'] = dict(self.diagnostics.get(agent_id, {}))
+        item['runtime'] = dict(self.runtime[agent_id]) if agent_id in self.runtime else None
+        return item
+
+    def note_rejection(self, payload, status):
+        if not isinstance(payload, dict):
+            return
+        aid = self.resolve(payload.get('agent'))
+        if not aid:
+            return
+        with self.lock:
+            diag = self.diagnostics.setdefault(aid, {})
+            diag.update(lastRejectedAt=time.time(), lastError=f'HTTP {status}：事件字段或任务顺序不符合协议',
+                        rejectedCount=diag.get('rejectedCount', 0) + 1)
+            self._save_state_unlocked()
+            self._broadcast_snapshot_unlocked()
+
+    def _broadcast_snapshot_unlocked(self):
+        packet = self._office_payload_unlocked()
+        for q in list(self.subscribers):
+            # Diagnostics do not create contact or task events.
+            if q.full():
+                while not q.empty():
+                    try:
+                        q.get_nowait()
+                    except queue.Empty:
+                        break
+                q.put_nowait(('snapshot', packet))
+            else:
+                q.put_nowait(('telemetry', {'diagnostics': packet['diagnostics'], 'connector': packet['connector']}))
+
+    def set_connector(self, **changes):
+        with self.lock:
+            self.connector.update(changes)
+            self._broadcast_snapshot_unlocked()
 
     def _snapshot_unlocked(self):
         out = []
         for agent_id, ev in self.last.items():
-            item = dict(ev)
-            item["seen"] = self.last_seen.get(agent_id, ev.get("ts"))
-            item["epoch"] = self.epoch
-            out.append(item)
+            out.append(self._agent_snapshot_unlocked(agent_id))
         return out
 
     def snapshot(self):
@@ -313,6 +440,9 @@ class Hub:
             "serverTime": time.time(),
             "seq": self.sequence,
             "epoch": self.epoch,
+            'diagnostics': {k: dict(v) for k, v in self.diagnostics.items()},
+            'connector': dict(self.connector),
+            'taskProtocol': 1,
         }
 
     def subscribe(self):
@@ -334,9 +464,23 @@ class Hub:
             data = json.loads(STATE_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
-        last = data.get("last") or {}
-        seen = data.get("lastSeen") or {}
-        recent = data.get("recent") or []
+        if not isinstance(data, dict):
+            return
+        last = data.get('last') if isinstance(data.get('last'), dict) else {}
+        seen = data.get('lastSeen') if isinstance(data.get('lastSeen'), dict) else {}
+        recent = data.get('recent') if isinstance(data.get('recent'), list) else []
+        self.tasks.restore(data.get('tasks', []), self.roster)
+        closed = data.get('closedTasks', [])
+        if isinstance(closed, list):
+            self.tasks.closed = {key: True for key in closed[-4096:] if isinstance(key, str)}
+        for field in ('diagnostics', 'runtime'):
+            values = data.get(field, {})
+            if isinstance(values, dict):
+                setattr(self, field, {k: v for k, v in values.items() if k in self.roster and isinstance(v, dict)})
+        receipts = data.get('receipts', {})
+        if isinstance(receipts, dict):
+            self.receipts = {k: v for k, v in list(receipts.items())[-512:]
+                             if isinstance(v, dict) and isinstance(v.get('event'), dict) and isinstance(v.get('fingerprint'), str)}
         for agent_id, ev in last.items():
             if agent_id in self.roster and isinstance(ev, dict):
                 self.last[agent_id] = ev
@@ -366,6 +510,11 @@ class Hub:
                 "last": self.last,
                 "lastSeen": self.last_seen,
                 "recent": list(self.recent),
+                'tasks': list(self.tasks.items.values()),
+                'closedTasks': list(self.tasks.closed),
+                'runtime': self.runtime,
+                'diagnostics': self.diagnostics,
+                'receipts': self.receipts,
             }
             tmp = STATE_PATH.with_suffix(".json.tmp")
             tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
@@ -476,6 +625,9 @@ def make_handler(hub, token):
                 )
             if path == "/api/office":
                 return self.reply(200, hub.office_payload())
+            if path == '/api/diagnostics':
+                office = hub.office_payload()
+                return self.reply(200, {'bots': office['diagnostics'], 'connector': office['connector']})
             if path == "/api/events/stream":
                 return self.stream()
             if self.command == "HEAD":
@@ -494,9 +646,12 @@ def make_handler(hub, token):
                 return self.reply(200, {"ok": True}, cookie=cookie)
             if path != "/api/events":
                 return self.reply(404, {"error": "not found"})
+            payload = None
+            authenticated = False
             try:
                 if not self.bearer_ok():
                     raise EventError(401, "missing or wrong bearer token")
+                authenticated = True
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
                 except ValueError:
@@ -510,9 +665,11 @@ def make_handler(hub, token):
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     raise EventError(400, "body is not valid JSON")
                 event = hub.validate(payload)
+                event = hub.publish(event)
             except EventError as e:
+                if authenticated:
+                    hub.note_rejection(payload, e.status)
                 return self.reply(e.status, e.body)
-            hub.publish(event)
             self.reply(202, {"ok": True, "event": event, "watching": len(hub.subscribers)})
 
         def stream(self):
@@ -552,7 +709,22 @@ def make_handler(hub, token):
     return Handler
 
 
-def make_server(host="127.0.0.1", port=8787, token=None, roster=None, office=None, persist=False):
+class OfficeServer(ThreadingHTTPServer):
+    daemon_threads = True
+    bridge = None
+
+    def shutdown(self):
+        if self.bridge:
+            self.bridge.close()
+        super().shutdown()
+
+    def server_close(self):
+        if self.bridge:
+            self.bridge.close()
+        super().server_close()
+
+
+def make_server(host="127.0.0.1", port=8787, token=None, roster=None, office=None, persist=False, gateway_config=None):
     if office is None:
         office = load_office()
         if roster:
@@ -573,9 +745,12 @@ def make_server(host="127.0.0.1", port=8787, token=None, roster=None, office=Non
             office["aliases"] = {i: i for i in roster}
             office["aliases"].update({n.lower(): i for i, n in roster.items()})
     hub = Hub(office, persist=persist)
-    server = ThreadingHTTPServer((host, port), make_handler(hub, token))
-    server.daemon_threads = True
+    server = OfficeServer((host, port), make_handler(hub, token))
     server.hub = hub
+    if gateway_config:
+        from grokbot_gateway import GatewayBridge
+        server.bridge = GatewayBridge(hub, gateway_config)
+        server.bridge.start()
     return server
 
 
@@ -583,10 +758,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=8787)
+    ap.add_argument('--grokbot-config', default=os.environ.get('OFFICE_GROKBOT_CONFIG'),
+                    help='可选：只读网关采集器的本机 JSON 配置文件，不把口令写到命令行')
     args = ap.parse_args()
     token = os.environ.get("OFFICE_TOKEN") or None
     office = load_office()
-    server = make_server(args.host, args.port, token, office=office, persist=True)
+    server = make_server(args.host, args.port, token, office=office, persist=True, gateway_config=args.grokbot_config)
     print(f"Office:  http://{args.host}:{args.port}/")
     print(f"Events:  POST http://{args.host}:{args.port}/api/events   (token {'required' if token else 'not required'})")
     print(f"Bots:    {', '.join(server.hub.roster)}")
@@ -596,6 +773,8 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nbye")
+    finally:
+        server.server_close()
 
 
 if __name__ == "__main__":

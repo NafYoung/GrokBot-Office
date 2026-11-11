@@ -274,6 +274,63 @@ def run(screenshots=None):
             results['task_freshness'] = 'handoff keeps task stale in scene, counts and restored snapshot; a real status makes it current'
             audit.close()
 
+            # Multi-task protocol through the actual CLI client, HTTP, SSE and detail UI.
+            page.set_viewport_size({'width':1440,'height':1000})
+            def task(task_id, phase, revision, text, **extra):
+                publish(dict(type='task', agent='guan', taskId=task_id, phase=phase,
+                             revision=revision, eventId=f'{task_id}.{revision}', text=text, **extra))
+            task('browser-a', 'started', 1, '整理多智能体架构笔记', state='coding')
+            task('browser-b', 'started', 1, '核对参考项目的事件接口', state='browsing')
+            page.wait_for_function('window.office.agents.find(a=>a.id==="guan").tasks.length===2')
+            page.locator('#team li[data-id="guan"]').click()
+            page.locator('#selected .task-panel').get_by_text('2 项进行中').wait_for()
+            task('browser-a', 'completed', 2, '架构笔记已整理')
+            state(page, 'guan', 'browsing')
+            page.locator('#selected .task-panel').get_by_text('1 项进行中').wait_for()
+            task('browser-b', 'progress', 2, '<img src=x onerror="window.pwned=1">')
+            page.locator('#selected .task-item').get_by_text('<img src=x onerror="window.pwned=1">', exact=True).wait_for()
+            assert page.evaluate('window.pwned || false') is False
+            assert page.locator('#selected img').count() == 0
+            task('browser-b', 'progress', 3, '已核对任务开始与完成事件，正在确认异常处理')
+            page.wait_for_function('window.office.agents.find(a=>a.id==="guan").tasks[0].revision===3')
+            task_ts = page.evaluate('window.office.agents.find(a=>a.id==="guan").lastStatusTs')
+            logs = page.locator('#activity li').count()
+            publish({'type':'heartbeat','agent':'guan'})
+            page.wait_for_function('window.office.agents.find(a=>a.id==="guan").diagnostic.lastHeartbeatAt != null')
+            assert page.evaluate('window.office.agents.find(a=>a.id==="guan").lastStatusTs') == task_ts
+            assert page.locator('#activity li').count() == logs
+            try:
+                reporter.report({'type':'task','agent':'guan','taskId':'missing','eventId':'bad-lifecycle',
+                                 'phase':'completed','revision':2})
+                raise AssertionError('missing started was accepted')
+            except Exception as exc:
+                from office_report import ReportError
+                assert isinstance(exc, ReportError)
+            page.locator('#selected .diagnostic-error').get_by_text('最近上报被拒绝', exact=False).wait_for()
+            page.locator('#connectionCard summary').click()
+            page.locator('#connectionStatus').get_by_text('等待配置', exact=True).wait_for()
+            srv.hub.set_connector(state='partial', syncedAgents=1, lastSuccessAt=__import__('time').time(),
+                                  message='测试网关：部分成员已匹配', unmappedNames=['未入席的测试成员'])
+            page.locator('#connectionStatus').get_by_text('部分 Bot 未同步', exact=True).wait_for()
+            shot(page, 'multi-task-diagnostics')
+            page.set_viewport_size({'width':390,'height':844})
+            assert not layout(page)['overflow']
+            page.locator('#selected').scroll_into_view_if_needed()
+            shot(page, 'multi-task-mobile')
+            page.reload()
+            page.wait_for_function('window.office.agents.find(a=>a.id==="guan").tasks.length===2')
+            assert page.evaluate('window.office.agents.find(a=>a.id==="guan").tasks[0].revision') == 3
+            page.locator('#demoBtn').click()
+            page.wait_for_function('window.office.ui.mode === "demo"')
+            assert page.locator('#connectionCard').is_hidden()
+            assert page.locator('#selected .task-panel').count() == 0
+            assert page.evaluate('window.office.agents.every(a=>a.tasks.length===0)')
+            page.locator('#demoBtn').click()
+            page.wait_for_function('window.office.agents.find(a=>a.id==="guan").tasks.length===2')
+            task('browser-b', 'completed', 4, '接口核对完成')
+            state(page, 'guan', 'idle')
+            results['multi_task_diagnostics'] = 'parallel tasks, safe text, heartbeat freshness, rejection diagnostics, telemetry, reload and demo isolation passed'
+
             pending = context.new_page()
             pending.on('pageerror', lambda error: errors.append(str(error)))
             failures = []

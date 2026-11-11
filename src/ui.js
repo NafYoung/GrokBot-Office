@@ -2,6 +2,7 @@
 import { OFFICE, STATES, PRESENCE, WORKING_STATES } from './config.js';
 import { formatAge, statusCaption, hasFreshTask } from './presence.js';
 import { drawRobotPortrait } from './robot.js';
+import { activeTasks, taskPanel, diagnosticPanel, connectorPanel } from './telemetry.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = (id) => document.getElementById(id);
@@ -22,7 +23,7 @@ function contactNote(a) {
   return a.role;
 }
 
-export function createUI(agents, { onDemo, onMode, onSelect }) {
+export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
   $('title').textContent = `${OFFICE.owner} 的 ${OFFICE.title}`;
   document.title = `${OFFICE.owner} 的 ${OFFICE.title}`;
   $('ownerName').textContent = OFFICE.owner;
@@ -40,6 +41,13 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
   let feed = 'connecting'; // connecting | open | closed | noserver | locked
   let selectedId = null;
   let lastSig = '';
+  let connector = {};
+
+  function setTelemetry(data) {
+    if (data.connector) connector = data.connector;
+    for (const a of agents) if (data.diagnostics?.[a.id]) a.diagnostic = data.diagnostics[a.id];
+    lastSig = '';
+  }
 
   function setUiMode(next, kind = 'work') {
     uiMode = next;
@@ -110,6 +118,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
     $('feedBanner').dataset.kind = kind || feed;
     $('authForm').hidden = uiMode === 'demo' || feed !== 'locked';
     $('integrationCard').hidden = uiMode === 'demo' || feed === 'locked';
+    $('connectionCard').hidden = uiMode === 'demo' || feed === 'locked';
   }
 
   function select(id) {
@@ -164,7 +173,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
     const work = a.text ? esc(a.text) : '尚未收到任务上报';
     return `<li data-id="${esc(a.id)}" class="${selectedId === a.id ? 'on' : ''}">
       ${portrait(a)}
-      <span class="nm">${esc(a.name)}<i>${esc(a.role)}</i></span>
+      <span class="nm">${esc(a.name)}<i>${esc(a.role)}${activeTasks(a).length ? ` · ${activeTasks(a).length} 项任务` : ''}</i></span>
       <span class="st"><i class="dot" style="background:${p.color}"></i>${esc(cap)}</span>
       <span class="tx">${work}<em>${esc(age)}</em></span>
     </li>`;
@@ -192,13 +201,14 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       ${a.lastStatusTs != null ? `<p class="muted">任务上报：${esc(formatAge(a.lastStatusTs, nowSec))}</p>` : ''}
       ${a.activityLabel ? `<p class="sel-loaf">活动：${esc(a.activityLabel)}</p>` : ''}
       ${a.ambientLabel ? `<p class="sel-loaf">摸鱼：${esc(a.ambientLabel)}</p>` : ''}
-      <p class="muted sel-note">${esc(contactNote(a))}</p>`;
+      <p class="muted sel-note">${esc(contactNote(a))}</p>
+      ${uiMode === 'live' ? taskPanel(a, nowSec, freshness?.staleAfterSec) + diagnosticPanel(a, nowSec, freshness?.staleAfterSec) : ''}`;
   }
 
   function update(nowSec = Date.now() / 1000) {
     const sig = [
-      uiMode, feed, selectedId,
-      ...agents.map((a) => `${a.id}:${a.presence}:${a.taskPresence}:${a.state}:${a.text}:${a.activityLabel}:${a.ambientLabel}:${formatAge(a.lastSeenTs, nowSec)}:${formatAge(a.lastStatusTs, nowSec)}`),
+      uiMode, feed, selectedId, JSON.stringify(connector), formatAge(connector.lastSuccessAt, nowSec),
+      ...agents.map((a) => `${a.id}:${a.presence}:${a.taskPresence}:${a.state}:${a.text}:${a.activityLabel}:${a.ambientLabel}:${formatAge(a.lastSeenTs, nowSec)}:${formatAge(a.lastStatusTs, nowSec)}:${JSON.stringify(a.tasks)}:${JSON.stringify(a.diagnostic)}`),
     ].join('|');
     if (sig === lastSig) return;
     lastSig = sig;
@@ -234,6 +244,8 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
       </button>`;
     }).join('');
     renderSelected(nowSec);
+    $('connectionStatus').innerHTML = connectorPanel(connector, nowSec);
+    $('connectionBots').innerHTML = agents.map(a => `<button type="button" data-bot="${esc(a.id)}"><span>${esc(a.name)}</span><small>${esc(a.diagnostic.lastRejectedAt > (a.diagnostic.lastAcceptedAt || 0) ? '上报被拒绝' : caption(a))}</small></button>`).join('');
     for (const canvas of document.querySelectorAll('[data-bot-portrait]')) {
       const agent = agents.find((a) => a.id === canvas.dataset.botPortrait);
       if (agent) drawRobotPortrait(canvas, agent);
@@ -253,10 +265,14 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
   }
 
   const clearLog = () => { $('activity').innerHTML = ''; };
+  $('connectionBots').addEventListener('click', e => {
+    const button = e.target.closest('[data-bot]');
+    if (button) select(button.dataset.bot);
+  });
 
   setUiMode('live');
   return {
-    update, addLog, clearLog, select,
+    update, addLog, clearLog, select, setTelemetry,
     setUiMode, setFeed,
     get mode() { return uiMode; },
     get feed() { return feed; },

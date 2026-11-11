@@ -54,7 +54,11 @@ http://127.0.0.1:8787/?stale=3&offline=8
 
 ## 连接 Grok Bot
 
-名单、名字和工位来自 `src/config.js`，不是从 Grokbot 应用自动同步的。仓库提供状态接收服务和 `office_report.py` 上报器；在页面右侧展开「连接 Grokbot 的真实任务」，选择具体 Bot，生成对应当前电脑、端口和工位 ID 的专属规则，直接保存到这个 Bot 的长期指令中，再通过它已连接的本机 Shell 上报。每个成员需要分别配置，主 Bot 的规则与工具权限不会自动继承给其他 Bot。
+新增两项能力：**带编号的并行任务**和**可选的主机只读采集**。页面的连接诊断会显示各 Bot 的数据来源、最近联系、任务更新时间和事件拒绝。任务完成仅结束自己的 taskId；重复、延迟事件不会回退仍保留的任务。
+
+自动采集参考社区 Grokbot 主机网关协议，读取真实忙闲、等待确认及后台任务；默认未配置，需要网关可达和本机凭据，不能仅靠 `git pull` 自动连上账号。详细配置、兼容边界和任务协议见 [GROKBOT.md](GROKBOT.md)。不配置适配器也可继续用原来的上报方式。
+
+**主动上报方式：** 名单、名字和工位来自 `src/config.js`。在页面右侧展开「连接 Grokbot 的真实任务」，选择具体 Bot，生成对应当前电脑、端口和工位 ID 的专属规则，直接保存到这个 Bot 的长期指令中，再通过它已连接的本机 Shell 上报。使用这种方式时每个成员需要分别配置，主 Bot 的规则与工具权限不会自动继承给其他 Bot。
 
 已有的「机器人办公室面板」Webhook 只处理点击通知，不会自动触发普通聊天任务的状态同步。不要沿用旧电脑的 machineId 或旧端口；生成器会给出当前配置。具体设置与旧 Webhook 的修订见 [GROKBOT.md](GROKBOT.md)。生成配置不会自动修改 Grokbot 应用。
 
@@ -76,6 +80,8 @@ curl -s -X POST http://127.0.0.1:8787/api/events \
 | `status`（默认） | 回工位并显示状态 |
 | `handoff` | 走到对方工位交接 |
 | `sync` | Grok Bot 召集全员到前台开会 |
+| `task` | 按 taskId 记录开始、进度、等待、完成、失败或取消 |
+| `heartbeat` | 只更新联系时间，不刷新任务或制造工作 |
 
 `state`：`coding` `browsing` `terminal` `thinking` `needsYou` `error` `idle`
 
@@ -140,15 +146,18 @@ Python Roadmap、论文证据核对员已撤席。JD调研已合并到调研简�
 消息内容是包含 `last`、`recent`、`lastSeen`、`seq`、`epoch` 等字段的对象；
 后续 `event` 带有服务器分配的 `seq` 和 `epoch`。`POST /api/events` 的字段和 202 响应保持兼容。
 旧版 SSE 客户端若直接遍历快照数组，需要改为遍历 `snapshot.last`。
+新事件的 `current` 字段是该 Bot 的合并状态，包含 `tasks`、`diagnostic` 和独立 `runtime` 观察。自定义客户端处理 `task`、`heartbeat` 时应使用 `event.current` 更新角色，用原事件记录活动；`silent` 事件不记活动。`telemetry` 消息只更新连接诊断，不代表任务或联系更新。
 
 页面首次检查服务失败、请求超时或事件流因 HTTP 错误关闭后，会自动重试（间隔逐步增加，最多 15 秒）。退出真实模式会取消重试；口令失效时等待重新解锁。
 
-长时间同一状态也想保持「在岗」，请偶尔再发一条 `idle` 或当前 state，否则会过期。这是故意的。
+确实重新确认状态时可再次上报；只确认联系正常则发送 `heartbeat`。不能定时重放旧工作状态来掩盖任务过期。已配置的主机采集器会重新读取真实状态，无需 Bot 制造心跳。
 
 ## 结构
 
 ```
 server.py        静态页面 + 事件校验 + SSE（标准库）
+task_state.py    带编号任务的生命周期、版本顺序和保留策略
+grokbot_gateway.py  可选只读主机采集、精确身份匹配和诊断
 integration.py   根据实际电脑、端口和名单生成长期上报规则（不含密钥）
 office_report.py Grokbot Shell 上报工具：check / agents / report
 src/config.js    唯一名单来源：谁、坐哪、新鲜度、演示文案
@@ -161,6 +170,7 @@ src/render.js    等距渲染、任务浮泡
 src/robot.js     圆润机器人、表情和动作、共用头像
 src/ui.js        中文面板、桌面/手机布局
 src/integration.js  页面内生成、复制接入规则
+src/telemetry.js    多任务记录、来源和连接诊断的安全展示
 ```
 
 ## 测试
