@@ -1,9 +1,10 @@
 // 渲染器：把 world + agents 画到 canvas。只读状态，不改状态。
 import { GRID, DESKS, RUGS, WALLS, STATES, PRESENCE, FONT, OFFICE } from './config.js';
 import { shouldShowOnFloor } from './presence.js';
+import { drawRobot, ROBOT_BOUNDS } from './robot.js';
 import {
   TW, TH, ZU, P, box, cyl, blob, quad3, poly, ellipseFloor, shade, rgb, hexToRgb,
-  planeText, planeTransform, muteHex,
+  planeText, planeTransform,
 } from './iso.js';
 
 const W = GRID.w, D = GRID.d, WALL_H = 3.3, FLOOR_T = 0.3;
@@ -313,71 +314,24 @@ function buildItems() {
   return items;
 }
 
-const AGENT_SCALE = 1.4;
-
-function bodyColor(a) {
-  return a.presence === 'fresh' ? a.color : muteHex(a.color, 0.62);
-}
+const AGENT_SCALE = 1.2;
 
 function drawAgent(ctx, a, t, env) {
-  ctx.save();
-  const [fx0, fy0] = P(a.x, a.y, 0);
-  ctx.translate(fx0, fy0);
-  ctx.scale(AGENT_SCALE, AGENT_SCALE);
-  ctx.translate(-fx0, -fy0);
-  drawAgentBody(ctx, a, t, env);
-  ctx.restore();
-}
-
-function drawAgentBody(ctx, a, t, env) {
-  const seated = a.seated;
-  const swing = a.moving ? Math.sin(t * 10 + a.phase) : 0;
-  const bob = a.moving ? Math.abs(swing) * 0.05 : 0;
-  const lift = seated ? 0.08 : 0;
-  const color = bodyColor(a);
-  ellipseFloor(ctx, a.x, a.y, 0, 0.27, 0.27, 'rgba(0,0,0,0.28)');
-
+  ellipseFloor(ctx, a.x, a.y, 0, 0.29, 0.25, 'rgba(0,0,0,0.25)');
   if (env.selectedId === a.id) {
     ellipseFloor(ctx, a.x, a.y, 0, 0.48, 0.48, null, 'rgba(226,232,240,0.9)', 2);
   }
-
   if (a.presence === 'fresh' && (a.state === 'needsYou' || a.state === 'error')) {
-    const pulse = 0.5 + 0.5 * Math.sin(t * 5);
-    ellipseFloor(ctx, a.x, a.y, 0, 0.42 + pulse * 0.1, 0.42 + pulse * 0.1, null, a.state === 'error' ? 'rgba(239,68,68,0.9)' : 'rgba(251,146,60,0.9)', 2);
+    const pulse = .5 + .5 * Math.sin(t * 5);
+    ellipseFloor(ctx, a.x, a.y, 0, .42 + pulse * .1, .42 + pulse * .1, null,
+      a.state === 'error' ? 'rgba(239,68,68,.9)' : 'rgba(251,146,60,.9)', 2);
   }
-
-  const dark = shade(color, 0.7);
-  const stretch = a.ambient === 'stretch' && !a.moving;
-  if (!seated) {
-    const sx = a.fx * swing * 0.07, sy = a.fy * swing * 0.07;
-    box(ctx, a.x - 0.14 + sx, a.y - 0.06 + sy, bob, 0.11, 0.11, 0.24, dark);
-    box(ctx, a.x + 0.03 - sx, a.y - 0.06 - sy, bob, 0.11, 0.11, 0.24, dark);
-  }
-  const z0 = 0.22 + bob + lift;
-  box(ctx, a.x - 0.14, a.y - 0.11, z0, 0.28, 0.22, 0.32, color);
-  const armZ = z0 + (stretch ? 0.3 : 0.08);
-  box(ctx, a.x - 0.2 - (stretch ? 0.02 : 0), a.y - 0.07, armZ, 0.06, 0.13, stretch ? 0.16 : 0.22, dark);
-  box(ctx, a.x + 0.14 + (stretch ? 0.02 : 0), a.y - 0.07, armZ, 0.06, 0.13, stretch ? 0.16 : 0.22, dark);
-  const hz = z0 + 0.32;
-  box(ctx, a.x - 0.14, a.y - 0.14, hz, 0.28, 0.28, 0.26, shade(color, 1.12));
-  const eye = '#0b0f19';
-  if (a.fx > 0) {
-    const xx = a.x + 0.141;
-    for (const yy of [a.y - 0.07, a.y + 0.03]) quad3(ctx, [[xx, yy, hz + 0.13], [xx, yy + 0.05, hz + 0.13], [xx, yy + 0.05, hz + 0.19], [xx, yy, hz + 0.19]], eye);
-  } else if (a.fy > 0) {
-    const yy = a.y + 0.141;
-    for (const xx of [a.x - 0.07, a.x + 0.03]) quad3(ctx, [[xx, yy, hz + 0.13], [xx + 0.05, yy, hz + 0.13], [xx + 0.05, yy, hz + 0.19], [xx, yy, hz + 0.19]], eye);
-  }
-  if (a.carry) {
-    const px = a.x + a.fx * 0.2 - 0.09, py = a.y + a.fy * 0.2 - 0.09;
-    box(ctx, px, py, z0 + 0.1, 0.18, 0.18, 0.16, '#c9954f');
-  }
-  if (a.prop === 'cup') {
-    const px = a.x + (a.fx || 0.2) * 0.2, py = a.y + (a.fy || 0) * 0.2;
-    cyl(ctx, px, py, z0 + 0.3, 0.045, 0.07, '#f4efe4', '#fffaf3');
-    cyl(ctx, px, py, z0 + 0.36, 0.04, 0.025, '#6f4e37');
-  }
-  env.labels.push({ a, wx: a.x, wy: a.y, wz: (hz + 0.3) * AGENT_SCALE + 0.12 });
+  ctx.save();
+  ctx.translate(...P(a.x, a.y));
+  ctx.scale(AGENT_SCALE, AGENT_SCALE);
+  drawRobot(ctx, a, t);
+  ctx.restore();
+  env.labels.push({ a, wx: a.x, wy: a.y, wz: ROBOT_BOUNDS.height * AGENT_SCALE / ZU + .35 });
 }
 
 function wrapText(ctx, text, maxWidth) {
@@ -418,8 +372,9 @@ export function createRenderer(canvas, agents) {
     canvas.height = Math.round(r.height * dpr);
     const bw = (W + D) * (TW / 2), bh = (W + D) * (TH / 2) + WALL_H * ZU + FLOOR_T * ZU;
     const narrow = r.width < 720;
-    const padX = narrow ? 10 : 24, padTop = narrow ? 64 : 74, padBot = narrow ? 96 : 70;
-    view.s = Math.min((r.width - padX * 2) / bw, (r.height - padTop - padBot) / bh);
+    const padX = narrow ? 10 : 24, padBot = narrow ? 64 : 70;
+    const padTop = Math.max(narrow ? 64 : 74, (document.querySelector('.topbar')?.offsetHeight || 0) + 24);
+    view.s = Math.max(0.05, Math.min((r.width - padX * 2) / bw, (r.height - padTop - padBot) / bh));
     const cx = (-D * TW / 2 + W * TW / 2) / 2;
     const cy = (-WALL_H * ZU + (W + D) * TH / 2 + FLOOR_T * ZU) / 2;
     view.ox = r.width / 2 - cx * view.s;
@@ -433,6 +388,14 @@ export function createRenderer(canvas, agents) {
     const rect = canvas.getBoundingClientRect();
     const sx = clientX - rect.left;
     const sy = clientY - rect.top;
+    // 点击大脑袋也能选中角色；重叠时优先最前面的机器人。
+    const visible = agents.filter(shouldShowOnFloor).sort((a, b) => (b.x + b.y) - (a.x + a.y));
+    for (const a of visible) {
+      const [x, y] = toScreen(a.x, a.y, 0);
+      const halfWidth = Math.max(10, ROBOT_BOUNDS.halfWidth * AGENT_SCALE * view.s);
+      const height = ROBOT_BOUNDS.height * AGENT_SCALE * view.s;
+      if (Math.abs(sx - x) <= halfWidth && sy >= y - height && sy <= y + 4) return a;
+    }
     const px = (sx - view.ox) / view.s;
     const py = (sy - view.oy) / view.s;
     const gx = (px / (TW / 2) + py / (TH / 2)) / 2;
@@ -533,6 +496,11 @@ export function createRenderer(canvas, agents) {
     for (const { a, sx, sy } of placeTags(labels)) {
       const text = bubbleText(a);
       if (!text) continue;
+      if (view.w < 720 && a.id !== selectedId && !['needsYou', 'error'].includes(a.state)) {
+        // 手机最多展示一个休息气泡，避免所有人同时说话遮住楼面。
+        const featured = agents.find((agent) => agent.ambientStage === 'doing');
+        if (!a.ambientLabel || a !== featured) continue;
+      }
       if (a.presence !== 'fresh' && a.id !== selectedId && a.state !== 'needsYou' && a.state !== 'error') continue;
       const lines = wrapText(ctx, text, 148);
       const tw = Math.max(...lines.map((ln) => ctx.measureText(ln).width));

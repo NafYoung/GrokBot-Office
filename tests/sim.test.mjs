@@ -211,3 +211,59 @@ test('applyEvent 能驱动真实事件，文案不含演示标记', () => {
   assert.ok(logs.some((l) => l.text === 'Real task' && l.demo === false));
   assert.equal(sim.applyEvent({ agent: 'nobody', state: 'coding', text: 'x' }), false);
 });
+
+test('需要你和错误立即显示，走路结束不会恢复旧状态', () => {
+  const { agents, sim, logs } = build();
+  const grok = agents.find((a) => a.id === 'grok');
+  sim.applyEvent({ agent: 'grok', state: 'coding', text: '原任务' });
+  sim.applyEvent({ type: 'handoff', agent: 'grok', to: 'qiwen', text: '交接中' });
+  run(agents, sim, 3);
+  assert.notDeepEqual(grok.cell, grok.seat);
+  sim.applyEvent({ agent: 'grok', state: 'needsYou', text: '请确认' });
+  assert.equal(grok.state, 'needsYou');
+  assert.equal(grok.text, '请确认');
+  assert.equal(logs.at(-1).text, '请确认');
+  sim.applyEvent({ agent: 'grok', state: 'error', text: '任务失败' });
+  assert.equal(grok.state, 'error');
+  run(agents, sim, 20);
+  assert.equal(grok.state, 'error');
+  assert.equal(grok.text, '任务失败');
+});
+
+test('旧快照和重复事件不会覆盖新状态或打断动作', () => {
+  const { agents, sim, logs } = build();
+  const grok = agents.find((a) => a.id === 'grok');
+  sim.applyEvent({ agent: 'grok', state: 'needsYou', text: '新状态', ts: 20, seq: 2, epoch: 'server-a' });
+  const script = grok.script;
+  sim.applyEvent({ agent: 'grok', state: 'coding', text: '旧快照', ts: 10, seq: 1, epoch: 'server-a' }, { immediate: true });
+  sim.applyEvent({ agent: 'grok', state: 'needsYou', text: '新状态', ts: 20, seq: 2, epoch: 'server-a' });
+  assert.equal(grok.state, 'needsYou');
+  assert.equal(grok.lastSeenTs, 20);
+  assert.equal(grok.script, script);
+  assert.equal(logs.length, 1);
+});
+
+test('无效事件不改变新鲜度，旧时间戳不回退状态', () => {
+  const { agents, sim } = build();
+  const grok = agents.find((a) => a.id === 'grok');
+  sim.applyEvent({ agent: 'grok', state: 'error', text: '新状态', ts: 20 });
+  sim.applyEvent({ agent: 'grok', state: 'coding', text: '旧状态', ts: 10 }, { immediate: true });
+  assert.equal(sim.applyEvent({ agent: 'grok', state: 'invalid', ts: 30 }), false);
+  assert.equal(sim.applyEvent({ type: 'handoff', agent: 'grok', to: 'ghost', ts: 30 }), false);
+  assert.equal(grok.lastSeenTs, 20);
+  assert.equal(grok.state, 'error');
+});
+
+test('仅有交接的在岗快照恢复按需工具，但不伪造工作或摸鱼', () => {
+  const { agents, sim } = build();
+  const eggbot = agents.find((a) => a.id === 'eggbot');
+  sim.applyEvent({ type: 'presence', agent: 'eggbot', seen: 123, seq: 1, epoch: 'server-a' }, { immediate: true });
+  eggbot.presence = 'fresh';
+  eggbot.loafIn = 0;
+  run(agents, sim, 30);
+  assert.equal(eggbot.lastSeenTs, 123);
+  assert.equal(eggbot.lastStatusTs, null);
+  assert.equal(eggbot.text, '');
+  assert.equal(eggbot.ambient, null);
+  assert.deepEqual(eggbot.cell, eggbot.seat);
+});

@@ -47,6 +47,7 @@ export const WORKING_STATES = ['coding', 'browsing', 'terminal', 'thinking', 'ne
 export const AGENTS = [
   {
     id: 'grok', name: 'Grok Bot', role: '前台总管', color: '#3b82f6',
+    look: { accessory: 'headset', badge: 'spark' },
     kind: 'resident', contact: 'expected',
     aliases: ['grokbot', 'grok bot', '前台总管'],
     desk: { x: 7, y: 0 },
@@ -60,6 +61,7 @@ export const AGENTS = [
   },
   {
     id: 'newbee', name: 'newbee naf', role: '个人助理', color: '#eab308',
+    look: { accessory: 'antenna', badge: 'heart' },
     kind: 'resident', contact: 'expected',
     aliases: ['newbee naf', '个人助理'],
     desk: { x: 4, y: 4 },
@@ -73,6 +75,7 @@ export const AGENTS = [
   },
   {
     id: 'guan', name: '观世界', role: 'AI 资讯', color: '#22d3ee',
+    look: { accessory: 'radar', badge: 'globe' },
     kind: 'resident', contact: 'expected',
     aliases: ['观世界'],
     desk: { x: 10, y: 1 },
@@ -87,6 +90,7 @@ export const AGENTS = [
   {
     // 当前不在可联系名单，席位保留，默认「未连接」；一旦发来事件就按实时显示
     id: 'diaoyan', name: '调研简报', role: '调研写作', color: '#f97316',
+    look: { accessory: 'glasses', badge: 'note' },
     kind: 'resident', contact: 'unconnected',
     aliases: ['调研简报', 'JD调研', 'jd调研', 'jddiaoyan', 'jd'],
     desk: { x: 12, y: 4 },
@@ -100,6 +104,7 @@ export const AGENTS = [
   },
   {
     id: 'zhuxian', name: '主线学习总管', role: '主线教务', color: '#8b7cf6',
+    look: { accessory: 'cap', badge: 'book' },
     kind: 'resident', contact: 'expected',
     aliases: ['主线学习总管', '学习总管'],
     desk: { x: 8, y: 5 },
@@ -113,6 +118,7 @@ export const AGENTS = [
   },
   {
     id: 'zhishiku', name: '知识库', role: '知识管理', color: '#22c55e',
+    look: { accessory: 'glasses', badge: 'book' },
     kind: 'resident', contact: 'expected',
     aliases: ['知识库'],
     desk: { x: 10, y: 8 },
@@ -126,6 +132,7 @@ export const AGENTS = [
   },
   {
     id: 'mianshi', name: '面试陪练', role: '面试口述', color: '#fb923c',
+    look: { accessory: 'headset', badge: 'chat' },
     kind: 'resident', contact: 'unconnected',
     aliases: ['面试陪练'],
     desk: { x: 12, y: 1 },
@@ -139,6 +146,7 @@ export const AGENTS = [
   },
   {
     id: 'qiwen', name: '奇闻异事', role: '观点闲聊', color: '#a855f7',
+    look: { accessory: 'ears', badge: 'spark' },
     kind: 'resident', contact: 'expected',
     aliases: ['奇闻异事'],
     desk: { x: 1, y: 6 },
@@ -152,6 +160,7 @@ export const AGENTS = [
   },
   {
     id: 'ziliao', name: '主线资料员', role: '按需助手', color: '#38bdf8',
+    look: { accessory: 'antenna', badge: 'note' },
     kind: 'auxiliary', contact: 'expected',
     aliases: ['主线资料员', '资料员'],
     spot: [3, 9],
@@ -165,6 +174,7 @@ export const AGENTS = [
   },
   {
     id: 'shiyan', name: '主线实验助教', role: '按需助手', color: '#c084fc',
+    look: { accessory: 'goggles', badge: 'flask' },
     kind: 'auxiliary', contact: 'expected',
     aliases: ['主线实验助教', '实验助教'],
     spot: [8, 9],
@@ -178,6 +188,7 @@ export const AGENTS = [
   },
   {
     id: 'yanshou', name: '主线验收员', role: '按需助手', color: '#2dd4bf',
+    look: { accessory: 'antenna', badge: 'check' },
     kind: 'auxiliary', contact: 'expected',
     aliases: ['主线验收员', '验收员'],
     spot: [5, 7],
@@ -191,6 +202,7 @@ export const AGENTS = [
   },
   {
     id: 'eggbot', name: 'Dr Eggbot', role: '按需设计', color: '#f472b6',
+    look: { accessory: 'sprout', badge: 'palette' },
     kind: 'on_demand', contact: 'expected',
     aliases: ['dr eggbot', 'eggbot', 'egg'],
     spot: [1, 8],
@@ -242,5 +254,6 @@ export const LOUNGE = [[5, 9], [7, 9], [4, 9], [8, 9]];
 // 空闲时的去处。只有「实时 + 空闲」才会走过去，不代表有新任务。
 export const COFFEE = [[1, 2], [1, 5], [3, 5]];
 export const STRETCH = [[4, 7], [6, 7], [8, 7], [11, 6]];
+export const STROLL = [[3, 2], [4, 3], [7, 3], [9, 6], [12, 7], [8, 9]];
 
 export const FONT = '"WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif';

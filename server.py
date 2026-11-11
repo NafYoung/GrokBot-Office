@@ -5,21 +5,26 @@
 
 只用 Python 标准库。默认监听 127.0.0.1。
 Mac mini 历史用法：python3 server.py --host 0.0.0.0 --port 8787
-若设置环境变量 OFFICE_TOKEN，POST 必须带 Authorization: Bearer <token>。
+若设置 OFFICE_TOKEN，API 读写均需认证；浏览器可用口令换取只读会话。
 不要把 token 写进仓库或聊天。
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
+import hmac
 import json
 import os
 import queue
 import re
+import secrets
 import threading
 import time
 from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.cookies import SimpleCookie, CookieError
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 ROOT = Path(__file__).resolve().parent
 STATE_PATH = ROOT / "data" / "office-state.json"
@@ -164,9 +169,11 @@ class Hub:
         for r in office["retired"]:
             if r.get("name"):
                 self.retired[r["name"].lower()] = r
-        self.last = {}  # agent_id -> 最近一条 status
+        self.last = {}  # agent_id -> 最近一条 status，或只有交接的 presence
         self.last_seen = {}  # agent_id -> unix ts
         self.recent = deque(maxlen=MAX_RECENT)
+        self.sequence = 0
+        self.epoch = secrets.token_hex(16)
         self.subscribers = set()
         self.lock = threading.Lock()
         if persist:
@@ -244,6 +251,8 @@ class Hub:
 
     def publish(self, event):
         with self.lock:
+            self.sequence += 1
+            event.update(seq=self.sequence, epoch=self.epoch, ts=time.time())
             ts = event["ts"]
             if event["type"] == "status":
                 stored = dict(event)
@@ -252,53 +261,65 @@ class Hub:
                 self.last_seen[event["agent"]] = ts
             elif event["type"] == "handoff":
                 self.last_seen[event["agent"]] = ts
-                if event["agent"] in self.last:
-                    self.last[event["agent"]]["seen"] = ts
+                stored = self.last.setdefault(event["agent"], {
+                    "type": "presence", "agent": event["agent"], "ts": ts,
+                })
+                stored.update(seen=ts, seq=self.sequence, epoch=self.epoch)
             self.recent.append(event)
             self._save_state_unlocked()
             for q in list(self.subscribers):
                 try:
                     q.put_nowait(("event", event))
                 except queue.Full:
-                    self.subscribers.discard(q)
+                    # 慢客户端重新拿完整快照，不能留下只发 ping 的假连接。
+                    while True:
+                        try:
+                            q.get_nowait()
+                        except queue.Empty:
+                            break
+                    q.put_nowait(("snapshot", self._office_payload_unlocked()))
+
+    def _snapshot_unlocked(self):
+        out = []
+        for agent_id, ev in self.last.items():
+            item = dict(ev)
+            item["seen"] = self.last_seen.get(agent_id, ev.get("ts"))
+            item["epoch"] = self.epoch
+            out.append(item)
+        return out
 
     def snapshot(self):
         with self.lock:
-            out = []
-            for agent_id, ev in self.last.items():
-                item = dict(ev)
-                item["seen"] = self.last_seen.get(agent_id, ev.get("ts"))
-                out.append(item)
-            return out
+            return self._snapshot_unlocked()
 
     def office_payload(self):
         with self.lock:
-            last = []
-            for agent_id, ev in self.last.items():
-                item = dict(ev)
-                item["seen"] = self.last_seen.get(agent_id, ev.get("ts"))
-                last.append(item)
-            return {
-                "owner": self.office["owner"],
-                "title": self.office["title"],
-                "agents": {a["id"]: a["name"] for a in self.office["agents"]},
-                "roster": self.office["agents"],
-                "states": list(STATES),
-                "types": list(EVENT_TYPES),
-                "freshness": self.office["freshness"],
-                "retired": self.office["retired"],
-                "last": last,
-                "recent": list(self.recent),
-                "lastSeen": dict(self.last_seen),
-                "serverTime": time.time(),
-            }
+            return self._office_payload_unlocked()
+
+    def _office_payload_unlocked(self):
+        return {
+            "owner": self.office["owner"],
+            "title": self.office["title"],
+            "agents": {a["id"]: a["name"] for a in self.office["agents"]},
+            "roster": self.office["agents"],
+            "states": list(STATES),
+            "types": list(EVENT_TYPES),
+            "freshness": self.office["freshness"],
+            "retired": self.office["retired"],
+            "last": self._snapshot_unlocked(),
+            "recent": list(self.recent),
+            "lastSeen": dict(self.last_seen),
+            "serverTime": time.time(),
+            "seq": self.sequence,
+            "epoch": self.epoch,
+        }
 
     def subscribe(self):
         q = queue.Queue(maxsize=200)
-        snap = self.snapshot()
         with self.lock:
+            # 同一临界区内捕获快照并注册订阅，不漏掉中间到达的事件。
+            q.put(("snapshot", self._office_payload_unlocked()))
             self.subscribers.add(q)
-            q.put(("snapshot", snap))
         return q
 
     def unsubscribe(self, q):
@@ -327,6 +348,13 @@ class Hub:
         for ev in recent[-MAX_RECENT:]:
             if isinstance(ev, dict):
                 self.recent.append(ev)
+        # 兼容旧版只有 lastSeen、没有 status 的交接记录。
+        for agent_id, ts in self.last_seen.items():
+            self.last.setdefault(agent_id, {"type": "presence", "agent": agent_id, "ts": ts})
+        self.sequence = max(
+            [0] + [ev.get("seq", 0) for ev in [*self.last.values(), *self.recent]
+                   if isinstance(ev.get("seq", 0), int)]
+        )
 
     def _save_state_unlocked(self):
         if not self.persist:
@@ -346,28 +374,73 @@ class Hub:
 
 
 def make_handler(hub, token):
+    session_secret = secrets.token_bytes(32)
+    session_lifetime = 12 * 60 * 60
+    public_files = {"/", "/index.html", "/style.css"}
+    public_files.update(f"/src/{p.name}" for p in (ROOT / "src").glob("*.js"))
+
+    def sign(expiry):
+        return hmac.new(session_secret, expiry.encode(), hashlib.sha256).hexdigest()
+
     class Handler(SimpleHTTPRequestHandler):
         def __init__(self, *args, **kwargs):
             super().__init__(*args, directory=str(ROOT), **kwargs)
 
         def end_headers(self):
             self.send_header("Cache-Control", "no-store")
+            self.send_header("X-Content-Type-Options", "nosniff")
             super().end_headers()
 
         def log_message(self, fmt, *args):
-            if "/api/events/stream" not in (args[0] if args else ""):
+            if "/api/events/stream" not in str(args[0] if args else ""):
                 super().log_message(fmt, *args)
 
-        def reply(self, status, body):
+        def bearer_ok(self):
+            actual = self.headers.get("Authorization", "").encode()
+            return not token or hmac.compare_digest(actual, f"Bearer {token}".encode())
+
+        def read_authorized(self):
+            if self.bearer_ok():
+                return True
+            try:
+                cookie = SimpleCookie(self.headers.get("Cookie", ""))
+                expiry, signature = cookie["office_session"].value.split(".", 1)
+                return int(expiry) > time.time() and hmac.compare_digest(signature.encode(), sign(expiry).encode())
+            except (CookieError, KeyError, ValueError):
+                return False
+
+        def send_head(self):
+            # HEAD 和 GET 共用白名单，仓库、数据文件、目录索引都不可下载。
+            path = unquote(urlsplit(self.path).path)
+            target = ROOT / path.lstrip("/")
+            if path not in public_files or target.resolve() != target:
+                self.send_error(404, "File not found")
+                return None
+            return super().send_head()
+
+        def reply(self, status, body, cookie=None):
             data = json.dumps(body, ensure_ascii=False).encode()
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
+            if cookie:
+                self.send_header("Set-Cookie", cookie)
             self.end_headers()
-            self.wfile.write(data)
+            if self.command != "HEAD":
+                try:
+                    self.wfile.write(data)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass
+
+        def do_HEAD(self):
+            self.do_GET()
 
         def do_GET(self):
             path = self.path.split("?", 1)[0]
+            if path == "/api/session":
+                return self.reply(200, {"authenticationRequired": bool(token), "authenticated": self.read_authorized()})
+            if path.startswith("/api/") and not self.read_authorized():
+                return self.reply(401, {"error": "office authentication required"})
             if path == "/api/health":
                 with hub.lock:
                     nsub = len(hub.subscribers)
@@ -397,13 +470,24 @@ def make_handler(hub, token):
                 return self.reply(200, hub.office_payload())
             if path == "/api/events/stream":
                 return self.stream()
+            if self.command == "HEAD":
+                return super().do_HEAD()
             return super().do_GET()
 
         def do_POST(self):
-            if self.path.split("?", 1)[0] != "/api/events":
+            path = self.path.split("?", 1)[0]
+            if path == "/api/session":
+                if not self.bearer_ok():
+                    return self.reply(401, {"error": "口令不正确，请重试"})
+                expiry = str(int(time.time()) + session_lifetime)
+                cookie = f"office_session={expiry}.{sign(expiry)}; HttpOnly; SameSite=Strict; Path=/; Max-Age={session_lifetime}"
+                if self.headers.get("Origin", "").startswith("https://"):
+                    cookie += "; Secure"
+                return self.reply(200, {"ok": True}, cookie=cookie)
+            if path != "/api/events":
                 return self.reply(404, {"error": "not found"})
             try:
-                if token and self.headers.get("Authorization") != f"Bearer {token}":
+                if not self.bearer_ok():
                     raise EventError(401, "missing or wrong bearer token")
                 try:
                     length = int(self.headers.get("Content-Length", "0"))
@@ -424,18 +508,31 @@ def make_handler(hub, token):
             self.reply(202, {"ok": True, "event": event, "watching": len(hub.subscribers)})
 
         def stream(self):
+            if self.command == "HEAD":
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                return
             q = hub.subscribe()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.send_header("Connection", "keep-alive")
-            self.end_headers()
             try:
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Connection", "keep-alive")
+                self.send_header("X-Accel-Buffering", "no")
+                self.end_headers()
                 while True:
+                    if not self.read_authorized():
+                        self.wfile.write(b"event: auth-required\ndata: {}\n\n")
+                        self.wfile.flush()
+                        break
                     try:
                         kind, data = q.get(timeout=15)
                     except queue.Empty:
                         self.wfile.write(b": ping\n\n")
                         self.wfile.flush()
+                        continue
+                    # 等待新事件期间会话也可能到期，发送工作内容前再检查。
+                    if not self.read_authorized():
                         continue
                     self.wfile.write(f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
                     self.wfile.flush()

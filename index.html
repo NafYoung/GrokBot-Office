@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0a1020" />
+  <link rel="icon" href="data:," />
   <title>YOUNG NAF 的 Bot 办公室</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -34,7 +35,10 @@
         <button type="button" data-mode="night">夜里</button>
       </div>
 
-      <button type="button" class="sim" id="demoBtn">进入演示模式</button>
+      <div class="demo-controls">
+        <button type="button" class="sim" id="restBtn" aria-pressed="false">看看休息日常</button>
+        <button type="button" class="sim" id="demoBtn">进入演示模式</button>
+      </div>
     </main>
 
     <aside class="side">
@@ -43,6 +47,13 @@
         <b id="ownerName">YOUNG NAF</b>
         <span class="badge" id="ownerBadge">等待事件</span>
       </div>
+      <form class="card auth-card" id="authForm" hidden>
+        <label for="officeToken">办公室口令</label>
+        <p class="hint">解锁后可查看实时状态和最近活动。</p>
+        <input id="officeToken" type="password" autocomplete="current-password" required />
+        <button type="submit">解锁办公室</button>
+        <p id="authMessage" role="alert"></p>
+      </form>
       <section class="card selected-card" id="selected">
         <p class="hint">点小人、工位或名单，查看工作内容与新鲜度。</p>
       </section>

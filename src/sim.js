@@ -19,6 +19,7 @@ export class Simulation {
     this.rand = rand;
     this.onLog = onLog;
     this.running = false;
+    this.demoRest = false;
     this.syncIn = 14;
     this.ambient = new AmbientLife({ agents, rand });
   }
@@ -27,19 +28,27 @@ export class Simulation {
   pick(list) { return list[Math.floor(this.rand() * list.length)]; }
   log(agent, text, extra = {}) { this.onLog({ agent, text, demo: this.running, ...extra }); }
 
-  start() {
+  start({ rest = false } = {}) {
     this.running = true;
+    this.demoRest = rest;
     const now = Date.now() / 1000;
     for (const a of this.agents) {
       if (a.cfg.kind === 'on_demand') continue;
       a.demoActive = true;
       a.lastSeenTs = now;
       a.presence = 'fresh';
+      if (rest) {
+        a.state = 'idle';
+        a.text = '【演示】暂时没有任务';
+        a.lastStatusTs = now;
+        a.loafIn = this.range(0.5, 4);
+      }
     }
   }
 
   stop() {
     this.running = false;
+    this.demoRest = false;
     this.syncIn = 14;
     for (const a of this.agents) a.resetUnknown();
   }
@@ -62,7 +71,7 @@ export class Simulation {
   }
 
   update(dt, nowSec = Date.now() / 1000) {
-    if (!this.running) {
+    if (!this.running || this.demoRest) {
       this.ambient.update(dt);
       return;
     }
@@ -185,20 +194,33 @@ export class Simulation {
 
     const a = this.find(ev.agent);
     if (!a) return false;
+    // 先校验再更新在岗时间。无效输入不应让一个离线 bot 重新亮起来。
+    if (type === 'status' && !STATES[ev.state]) return false;
+    if (type === 'handoff' && (!this.find(ev.to) || this.find(ev.to) === a)) return false;
+    if (!['status', 'handoff', 'presence'].includes(type)) return false;
+    if (type === 'presence' && !immediate) return false;
+    if (Number.isSafeInteger(ev.seq) && (ev.epoch ?? null) === a.eventEpoch && a.lastEventSeq != null && ev.seq <= a.lastEventSeq) return true;
+    if (!Number.isSafeInteger(ev.seq) && a.lastSeenTs != null && ts < a.lastSeenTs) return true;
+    a.lastEventSeq = Number.isSafeInteger(ev.seq) ? ev.seq : null;
+    a.eventEpoch = ev.epoch ?? null;
     a.lastSeenTs = ts;
     a.demoActive = false;
 
+    if (type === 'presence') {
+      a.snapToSeat();
+      return true;
+    }
+
     if (type === 'status') {
-      if (!STATES[ev.state]) return false;
       const text = ev.text || STATES[ev.state].label;
-      a.lastStatusTs = ts;
+      a.lastStatusTs = Number(ev.ts) || ts;
       if (!immediate && ev.state === 'idle' && a.state === 'idle') {
         const busy = Boolean(a.ambient || a.cur || a.script.length);
         const away = a.cell[0] !== a.seat[0] || a.cell[1] !== a.seat[1];
         if (busy || !away) {
           if (text && text !== a.text) {
             a.text = text;
-            if (!busy) this.log(a, text, { demo: false });
+            this.log(a, text, { demo: false, ts: ev.ts });
           }
           return true;
         }
@@ -210,11 +232,13 @@ export class Simulation {
         a.text = text;
         return true;
       }
+      // 工作状态与日志立即生效；回座位只负责表现，不延迟错误或待办提醒。
+      a.state = ev.state;
+      a.text = text;
+      this.log(a, text, { demo: false, ts: ev.ts });
       a.interrupt([
         { type: 'goto', cell: a.seat },
         { type: 'sit' },
-        { type: 'set', state: ev.state, text },
-        { type: 'call', fn: () => this.log(a, text, { demo: false }) },
       ]);
       return true;
     }
@@ -229,12 +253,12 @@ export class Simulation {
         return true;
       }
       const prev = { state: a.state, text: a.text };
+      this.log(a, text, { demo: false, ts: ev.ts });
       a.interrupt([
         { type: 'set', state, text: `去 ${target.name} 工位` },
         { type: 'carry', on: true },
         { type: 'goto', cell: target.visit },
         { type: 'set', state, text },
-        { type: 'call', fn: () => this.log(a, text, { demo: false }) },
         { type: 'wait', t: 2.2 },
         { type: 'carry', on: false },
         { type: 'goto', cell: a.seat },

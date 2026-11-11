@@ -2,18 +2,21 @@
 html, body { height: 100%; background: #0a1020; color: #e5e7eb; font: 13px "WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", -apple-system, "Helvetica Neue", Arial, sans-serif; }
 ul { list-style: none; }
 button { font: inherit; }
+[hidden] { display: none !important; }
 
 .app {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
-  height: 100%;
+  grid-template-areas: "banner banner" "stage side";
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100dvh;
   min-height: 100dvh;
 }
-.stage { position: relative; min-width: 0; min-height: 0; background: radial-gradient(ellipse at 50% 40%, #101a30 0%, #0a1020 70%); }
+.stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; background: radial-gradient(ellipse at 50% 40%, #101a30 0%, #0a1020 70%); }
 #office { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
 
 .demo-banner {
-  position: sticky; top: 0; z-index: 20; grid-column: 1 / -1;
+  position: sticky; top: 0; z-index: 20; grid-area: banner;
   text-align: center; padding: 8px 12px;
   background: #7c4a12; color: #fff7ed; font-weight: 700; letter-spacing: 0.02em;
 }
@@ -48,8 +51,11 @@ button { font: inherit; }
 .tod button:hover { color: #e5e7eb; }
 .tod button.on { background: #2a3350; color: #fff; }
 
-.sim {
+.demo-controls {
   position: absolute; right: 14px; bottom: 14px; z-index: 2;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.sim {
   border: 1px solid #2b3956; background: rgba(17, 24, 39, .9); color: #e5e7eb;
   padding: 9px 14px; border-radius: 999px; cursor: pointer; pointer-events: auto;
 }
@@ -69,10 +75,11 @@ button { font: inherit; }
 .roster-strip .av { width: 16px; height: 16px; border-radius: 50%; display: inline-block; }
 
 .side {
+  grid-area: side;
   display: flex; flex-direction: column; gap: 10px; padding: 12px;
   border-left: 1px solid #172036; background: #0c1324; min-height: 0; overflow: auto;
 }
-.owner { display: flex; align-items: center; gap: 10px; font-size: 15px; padding: 2px 2px 0; }
+.owner { display: flex; flex-shrink: 0; align-items: center; gap: 10px; font-size: 15px; padding: 2px 2px 0; }
 .owner .badge { margin-left: auto; }
 .avatar, .av {
   display: grid; place-items: center; width: 26px; height: 26px; border-radius: 50%;
@@ -80,24 +87,32 @@ button { font: inherit; }
 }
 .av { width: 20px; height: 20px; border: 1px solid rgba(255,255,255,.15); }
 .av.lg { width: 32px; height: 32px; }
+.av.robot-avatar { width: 27px; height: 27px; border: 0; border-radius: 0; background: transparent; }
+.av.lg.robot-avatar { width: 58px; height: 58px; }
+.roster-strip .av.robot-avatar { width: 24px; height: 24px; }
 .card {
   background: #0f172a; border: 1px solid #1a2540; border-radius: 12px; padding: 12px;
-  min-height: 0; display: flex; flex-direction: column;
+  min-height: 0; display: flex; flex-direction: column; flex-shrink: 0;
 }
-.card.grow { flex: 1; }
+.card.grow { flex: 1 0 200px; min-height: 200px; }
+.auth-card { gap: 10px; }
+.auth-card input { min-width: 0; padding: 9px; background: #0a1020; border: 1px solid #475569; border-radius: 6px; color: #fff; }
+.auth-card button { padding: 9px; background: #1d4ed8; border: 0; border-radius: 6px; color: #fff; cursor: pointer; }
+.auth-card button:disabled { opacity: .6; cursor: wait; }
+#authMessage { color: #fda4af; }
 .card h3 { font-size: 12px; font-weight: 600; color: #cbd5e1; margin-bottom: 10px; display: flex; gap: 6px; }
 .card h3 .muted { margin-left: auto; font-weight: 400; color: #64748b; }
 .muted { color: #64748b; }
 .hint { color: #94a3b8; line-height: 1.5; }
 
 #team li, #aux li {
-  display: grid; grid-template-columns: 22px 1fr auto; column-gap: 10px;
+  display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; column-gap: 8px;
   padding: 8px 4px; align-items: center; border-radius: 8px; cursor: pointer;
 }
 #team li:hover, #aux li:hover, #team li.on, #aux li.on { background: rgba(30, 41, 59, .65); }
 #team .av, #aux .av { grid-row: span 2; }
 #team .nm, #aux .nm { font-weight: 600; font-size: 12.5px; }
-#team .nm i, #aux .nm i { font-style: normal; font-weight: 400; color: #94a3b8; margin-left: 6px; }
+#team .nm i, #aux .nm i { display: block; font-style: normal; font-weight: 400; font-size: 10.5px; color: #94a3b8; margin-top: 2px; }
 #team .st, #aux .st { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #cbd5e1; }
 #team .tx, #aux .tx { grid-column: 2 / 4; font-size: 11.5px; color: #94a3b8; display: flex; gap: 8px; min-width: 0; }
 #team .tx, #aux .tx { white-space: nowrap; overflow: hidden; }
@@ -110,7 +125,7 @@ button { font: inherit; }
 .sel-loaf { color: #fde68a; margin-bottom: 6px; }
 .sel-note { font-size: 12px; }
 
-#activity { overflow: auto; min-height: 0; }
+#activity { overflow: auto; min-height: 120px; max-height: 300px; }
 #activity li { display: grid; grid-template-columns: 72px 10px 1fr; column-gap: 8px; padding: 7px 0; font-size: 12px; line-height: 1.35; align-items: start; color: #cbd5e1; }
 #activity .tm { color: #64748b; font-variant-numeric: tabular-nums; }
 #activity .dot { margin-top: 5px; }
@@ -118,17 +133,22 @@ button { font: inherit; }
 .demo-tag { color: #fdba74; font-style: normal; font-weight: 700; margin-right: 6px; font-size: 11px; }
 
 @media (max-width: 900px) {
-  .app { grid-template-columns: 1fr; grid-template-rows: minmax(56vh, 1fr) auto; }
-  .stage { min-height: 56vh; }
+  .app {
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "banner" "stage" "side";
+    grid-template-rows: auto minmax(420px, 56dvh) auto; height: auto;
+  }
+  .stage { min-height: 420px; }
   .side {
     border-left: 0; border-top: 1px solid #172036;
-    max-height: 44vh; padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    overflow: visible; padding-bottom: calc(12px + env(safe-area-inset-bottom));
   }
   .roster-strip { display: flex; bottom: 10px; }
   .legend { display: none; }
   .tod { display: none; }
-  .sim { top: 10px; right: 10px; bottom: auto; padding: 8px 12px; }
-  .topbar { right: 10px; left: 10px; padding-right: 118px; }
+  .demo-controls { top: 10px; right: 10px; bottom: auto; }
+  .sim { padding: 7px 12px; }
+  .topbar { right: 10px; left: 10px; }
+  .brand { padding-right: 118px; min-height: 80px; align-content: start; }
   .stats { gap: 6px; }
   .stat { padding: 3px 8px; font-size: 11px; }
 }
