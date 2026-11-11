@@ -108,6 +108,7 @@ export function createUI(agents, { onDemo, onMode, onSelect }) {
     $('feedBanner').textContent = feedText;
     $('feedBanner').dataset.kind = kind || feed;
     $('authForm').hidden = uiMode === 'demo' || feed !== 'locked';
+    $('integrationCard').hidden = uiMode === 'demo' || feed === 'locked';
   }
 
   function select(id) {

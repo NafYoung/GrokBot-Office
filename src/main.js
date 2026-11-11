@@ -6,8 +6,10 @@ import { Simulation, SYNC } from './sim.js';
 import { createRenderer, lightKey, makeLight, lerpLight } from './render.js';
 import { createUI } from './ui.js';
 import { classifyPresence, parseFreshnessParams } from './presence.js';
+import { setupIntegration } from './integration.js';
 
 const freshness = parseFreshnessParams(location.search, FRESHNESS);
+setupIntegration();
 const world = new World();
 const agents = AGENTS.map((c) => new Agent(c, world));
 const byId = Object.fromEntries(agents.map((a) => [a.id, a]));

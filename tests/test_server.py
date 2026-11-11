@@ -173,7 +173,7 @@ class TokenTest(unittest.TestCase):
     def test_reads_require_bearer_or_browser_session(self):
         srv = start(token="test-office-token")
         try:
-            for path in ["/api/office", "/api/agents", "/api/health", "/api/events/stream"]:
+            for path in ["/api/office", "/api/agents", "/api/health", "/api/events/stream", "/api/integration"]:
                 for method in ["GET", "HEAD"]:
                     self.assertEqual(request(srv, method, path)[0], 401, path)
             self.assertEqual(request(srv, "GET", "/")[0], 200)
@@ -217,7 +217,7 @@ class StaticFilesTest(unittest.TestCase):
         srv = start()
         try:
             for method in ["GET", "HEAD"]:
-                for path in ["/server.py", "/.git/HEAD", "/.git/config", "/data/office-state.json", "/src/", "/missing", "/src/../server.py", "/%2egit/HEAD"]:
+                for path in ["/server.py", "/office_report.py", "/integration.py", "/.git/HEAD", "/.git/config", "/data/office-state.json", "/src/", "/missing", "/src/../server.py", "/%2egit/HEAD"]:
                     self.assertEqual(request(srv, method, path)[0], 404, (method, path))
                 for path in ["/", "/index.html", "/style.css", "/src/main.js"]:
                     self.assertEqual(request(srv, method, path)[0], 200, (method, path))

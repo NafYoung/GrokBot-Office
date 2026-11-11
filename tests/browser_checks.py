@@ -9,13 +9,13 @@ import socket
 import sys
 import threading
 from pathlib import Path
-from urllib.request import Request, urlopen
 
 from playwright.sync_api import sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import server
+from office_report import OfficeClient
 
 
 def run(screenshots=None):
@@ -30,15 +30,11 @@ def run(screenshots=None):
     base = f"http://127.0.0.1:{srv.server_address[1]}"
     errors = []
     results = {}
+    reporter = OfficeClient(base, token='browser-test-token')
 
     def publish(payload):
-        # 通过真实 HTTP 上报入口测试，再检查 SSE 和画面；不绕过认证及事件校验。
-        request = Request(base + '/api/events', data=json.dumps(payload).encode(), headers={
-            'Content-Type': 'application/json', 'Authorization': 'Bearer browser-test-token',
-        })
-        with urlopen(request, timeout=5) as response:
-            assert response.status == 202
-            assert json.load(response)['ok']
+        # 使用交付给 Grokbot 的上报器，经认证 HTTP、SSE 到画面。
+        assert reporter.report(payload)['ok']
 
     def shot(page, name):
         if screenshots:
@@ -84,6 +80,24 @@ def run(screenshots=None):
             assert all('browser-test-token' not in url for url in requests)
             assert all('/api/office' not in url for url in requests)
             results['login'] = 'wrong token rejected; session unlocks SSE without storing token'
+
+            page.locator('#integrationCard summary').click()
+            page.locator('#generateIntegration').click()
+            page.locator('#integrationInstructions').wait_for(state='visible')
+            instructions = page.locator('#integrationInstructions').input_value()
+            assert base in instructions
+            assert 'office_report.py' in instructions
+            assert 'browser-test-token' not in instructions
+            assert '尚未修改 Grokbot' in page.locator('#integrationMessage').inner_text()
+            assert srv.hub.sequence == 0
+            shot(page, 'connection-setup')
+            page.set_viewport_size({'width':390,'height':844})
+            assert not layout(page)['overflow']
+            page.locator('#integrationCard').scroll_into_view_if_needed()
+            shot(page, 'connection-setup-mobile')
+            page.set_viewport_size({'width':1440,'height':900})
+            page.locator('#integrationCard summary').click()
+            results['setup'] = 'setup uses the receiving server machine and port; generates no events and exposes no token'
 
             page.locator('#modeBadge').get_by_text('等待 Bot 上报', exact=True).wait_for()
             assert '名单来自工位配置' in page.locator('#feedBanner').inner_text()

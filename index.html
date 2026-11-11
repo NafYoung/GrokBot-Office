@@ -54,6 +54,15 @@
         <button type="submit">解锁办公室</button>
         <p id="authMessage" role="alert"></p>
       </form>
+      <details class="card integration-card" id="integrationCard">
+        <summary>连接 Grokbot 的真实任务</summary>
+        <p class="hint">生成与这台电脑、当前端口对应的上报规则，再保存到需要同步的 Bot 长期指令中。</p>
+        <button type="button" id="generateIntegration">生成接入指令</button>
+        <p id="integrationMessage" class="hint" role="status"></p>
+        <label for="integrationInstructions" id="integrationLabel" hidden>复制给 Grokbot 的配置说明（不含口令）</label>
+        <textarea id="integrationInstructions" rows="9" readonly hidden></textarea>
+        <button type="button" id="copyIntegration" hidden>复制接入指令</button>
+      </details>
       <section class="card selected-card" id="selected">
         <p class="hint">点小人、工位或名单，查看工作内容与新鲜度。</p>
       </section>

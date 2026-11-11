@@ -25,6 +25,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from http.cookies import SimpleCookie, CookieError
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
+from integration import connection_info
 
 ROOT = Path(__file__).resolve().parent
 STATE_PATH = ROOT / "data" / "office-state.json"
@@ -441,6 +442,8 @@ def make_handler(hub, token):
                 return self.reply(200, {"authenticationRequired": bool(token), "authenticated": self.read_authorized()})
             if path.startswith("/api/") and not self.read_authorized():
                 return self.reply(401, {"error": "office authentication required"})
+            if path == "/api/integration":
+                return self.reply(200, connection_info(ROOT, self.server.server_port, hub.office, bool(token)))
             if path == "/api/health":
                 with hub.lock:
                     nsub = len(hub.subscribers)

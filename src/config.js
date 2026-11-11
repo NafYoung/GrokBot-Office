@@ -120,7 +120,7 @@ export const AGENTS = [
     id: 'zhishiku', name: '知识库', role: '知识管理', color: '#22c55e',
     look: { accessory: 'glasses', badge: 'book' },
     kind: 'resident', contact: 'expected',
-    aliases: ['知识库'],
+    aliases: ['知识库', 'nafyoung的知识库'],
     desk: { x: 10, y: 8 },
     demo: {
       tasks: [

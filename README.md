@@ -54,7 +54,9 @@ http://127.0.0.1:8787/?stale=3&offline=8
 
 ## 连接 Grok Bot
 
-名单、名字和工位来自 `src/config.js`，不是从 Grokbot 应用自动同步的。当前仓库提供状态接收服务，尚未包含已验证的 Grokbot 应用连接器；真实任务需要由应用支持的工具、Webhook 或任务回调上报。
+名单、名字和工位来自 `src/config.js`，不是从 Grokbot 应用自动同步的。仓库提供状态接收服务和 `office_report.py` 上报器；在页面右侧展开「连接 Grokbot 的真实任务」，生成对应当前电脑和端口的规则，保存到执行任务的各个 Bot 的长期指令中，再通过 Grokbot 已连接的本机 Shell 上报。
+
+已有的「机器人办公室面板」Webhook 只处理点击通知，不会自动触发普通聊天任务的状态同步。不要沿用旧电脑的 machineId 或旧端口；生成器会给出当前配置。具体设置与旧 Webhook 的修订见 [GROKBOT.md](GROKBOT.md)。生成配置不会自动修改 Grokbot 应用。
 
 页面会分别说明办公室服务是否连上、是否收到 Bot 的任务状态。仅打开网页、收到交接事件或进入演示，都不代表真实任务已经同步。完整验收需要在 Grokbot 应用内执行任务，确认开始、完成和失败状态到达对应工位；测试脚本的 HTTP 上报只验证办公室接收端。
 
@@ -141,6 +143,8 @@ Python Roadmap、论文证据核对员已撤席。JD调研已合并到调研简�
 
 ```
 server.py        静态页面 + 事件校验 + SSE（标准库）
+integration.py   根据实际电脑、端口和名单生成长期上报规则（不含密钥）
+office_report.py Grokbot Shell 上报工具：check / agents / report
 src/config.js    唯一名单来源：谁、坐哪、新鲜度、演示文案
 src/presence.js  未知/过期/离线
 src/ambient.js   实时空闲时的摸鱼（咖啡、伸展、坐坐、散步）与休息位占用
@@ -150,6 +154,7 @@ src/sim.js       演示随机排班 + applyEvent(真实事件)
 src/render.js    等距渲染、任务浮泡
 src/robot.js     圆润机器人、表情和动作、共用头像
 src/ui.js        中文面板、桌面/手机布局
+src/integration.js  页面内生成、复制接入规则
 ```
 
 ## 测试
