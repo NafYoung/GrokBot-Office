@@ -175,7 +175,7 @@ When action is anything else, fields have wrong types, or required fields are mi
 Deliver results to the user in this Grok Bot chat. If there is nothing to report, send no message.
 ```
 
-这段说明不会重新建立旧版本的网页「点工位发通知」接口。当前画面点击角色是查看详情；恢复主动派发任务是另一项功能，不能代替被动展示真实工作。
+这段说明不会重新建立旧版本的网页「点工位发通知」接口。当前画面点击角色可查看详情、安排喝咖啡或坐沙发等场景动作，这些操作只影响当前页面，不向实际 Bot 发送任务或消息。主动派发任务是另一项功能，不能代替被动展示真实工作。
 
 ## 验收边界
 

@@ -250,10 +250,25 @@ export const WALLS = [
 ];
 
 export const GATHER = [[5, 1], [6, 1], [8, 1], [5, 2], [6, 2], [7, 2], [8, 2]];
-export const LOUNGE = [[5, 9], [7, 9], [4, 9], [8, 9]];
-// 空闲时的去处。只有「实时 + 空闲」才会走过去，不代表有新任务。
+// 寻路停在沙发前，再以坐垫上的位置绘制坐姿；每个入口对应一个独立座位。
+export const SOFA_SLOTS = [
+  {approach:[5, 9], seat:[5.6, 8.8, .35]},
+  {approach:[7, 9], seat:[7.4, 8.8, .35]},
+];
+export const LOUNGE = SOFA_SLOTS.map(slot => slot.approach);
+// 空闲时的去处；日常动作不改变真实任务和联系时间。
 export const COFFEE = [[1, 2], [1, 5], [3, 5]];
 export const STRETCH = [[4, 7], [6, 7], [8, 7], [11, 6]];
 export const STROLL = [[3, 2], [4, 3], [7, 3], [9, 6], [12, 7], [8, 9]];
+
+// 与 render.js 家具模型相同的边界：[x, y, 宽, 深, 高]。
+export const INTERACTABLES = [
+  {id:'coffee-bar', label:'咖啡吧', action:'coffee', bounds:[0, 2, 1, 4, 1.3]},
+  {id:'coffee-table', label:'咖啡桌', action:'coffee', bounds:[1.95, 2.95, 1.1, 2.1, .98]},
+  {id:'sofa', label:'沙发', action:'lounge', bounds:[4.88, 8, 3.26, 1, .95]},
+  ...Object.entries(DESKS).map(([agentId, {x, y}]) => ({
+    id:`desk-${agentId}`, label:'工位', action:'home', agentId, bounds:[x, y, 2, 1, 1.14],
+  })),
+];
 
 export const FONT = '"WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif';

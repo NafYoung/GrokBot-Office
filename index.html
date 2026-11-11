@@ -20,7 +20,7 @@
         </div>
         <div class="stats" id="stats"></div>
         <p class="feed-banner" id="feedBanner">正在连接事件流…</p>
-        <p class="life-hint" id="lifeHint">日常活动自动进行 · 工作状态以上报为准</p>
+        <p class="life-hint" id="lifeHint">点选 Bot，再点咖啡吧、沙发或自己的工位 · 真实任务优先</p>
       </header>
 
       <canvas id="office" aria-label="等距办公室"></canvas>
@@ -41,6 +41,26 @@
         <button type="button" class="sim" id="demoBtn">进入演示模式</button>
       </div>
     </main>
+
+    <section class="action-dock" id="actionDock" aria-label="角色操作">
+      <p class="action-empty" id="actionEmpty"><span aria-hidden="true">◇</span> 点选一个 Bot，安排它的办公室日常</p>
+      <div id="actionContent" hidden>
+        <div class="action-character">
+          <canvas id="actionPortrait" width="128" height="128" aria-hidden="true"></canvas>
+          <div class="action-name"><small>当前选中</small><b id="actionName"></b><p id="actionDoing"></p></div>
+          <button type="button" id="actionClose" aria-label="取消选择">×</button>
+        </div>
+        <div class="action-buttons" role="group" aria-label="安排日常动作">
+          <button type="button" data-scene-action="coffee"><span aria-hidden="true">☕</span>喝咖啡</button>
+          <button type="button" data-scene-action="lounge"><span aria-hidden="true">▰</span>坐沙发</button>
+          <button type="button" data-scene-action="stretch"><span aria-hidden="true">↗</span>伸懒腰</button>
+          <button type="button" data-scene-action="stroll"><span aria-hidden="true">↝</span>散散步</button>
+          <button type="button" data-scene-action="home"><span aria-hidden="true">⌂</span>回工位</button>
+        </div>
+        <p class="action-note" id="actionNote">日常动作只影响场景，真实任务到达会自动接管。</p>
+      </div>
+      <p class="action-feedback" id="actionFeedback" role="status" aria-live="polite"></p>
+    </section>
 
     <aside class="side">
       <div class="owner">

@@ -1,11 +1,11 @@
 // 渲染器：把 world + agents 画到 canvas。只读状态，不改状态。
-import { GRID, DESKS, RUGS, WALLS, STATES, PRESENCE, FONT, OFFICE } from './config.js';
+import { GRID, DESKS, RUGS, WALLS, STATES, PRESENCE, FONT, OFFICE, INTERACTABLES } from './config.js';
 import { shouldShowOnFloor, hasFreshTask } from './presence.js';
-import { leisureLabel } from './ambient.js';
+import { leisureLabel, scenePosition } from './ambient.js';
 import { drawRobot, ROBOT_BOUNDS } from './robot.js';
 import {
   TW, TH, ZU, P, box, cyl, blob, quad3, poly, ellipseFloor, shade, rgb, hexToRgb,
-  planeText, planeTransform,
+  planeText, planeTransform, boxHitFaces, pointInPolygon,
 } from './iso.js';
 
 const W = GRID.w, D = GRID.d, WALL_H = 3.3, FLOOR_T = 0.3;
@@ -317,10 +317,17 @@ function buildItems() {
 
 const AGENT_SCALE = 1.2;
 
+function agentDepth(a) {
+  const [x, y, z] = scenePosition(a);
+  // 沙发作为一个整体绘制，坐在左侧的角色也必须在坐垫之后绘制。
+  return (z > 0 ? Math.max(15, x+y) : x+y) + .01;
+}
+
 function drawAgent(ctx, a, t, env) {
-  ellipseFloor(ctx, a.x, a.y, 0, 0.29, 0.25, 'rgba(0,0,0,0.25)');
+  const [ax, ay, az] = scenePosition(a);
+  ellipseFloor(ctx, ax, ay, az, 0.29, 0.25, 'rgba(0,0,0,0.25)');
   if (env.selectedId === a.id) {
-    ellipseFloor(ctx, a.x, a.y, 0, 0.48, 0.48, null, 'rgba(226,232,240,0.9)', 2);
+    ellipseFloor(ctx, ax, ay, az, 0.48, 0.48, 'rgba(94,234,191,.08)', 'rgba(110,231,183,0.95)', 2);
   }
   if (hasFreshTask(a) && (a.state === 'needsYou' || a.state === 'error')) {
     const pulse = .5 + .5 * Math.sin(t * 5);
@@ -328,11 +335,16 @@ function drawAgent(ctx, a, t, env) {
       a.state === 'error' ? 'rgba(239,68,68,.9)' : 'rgba(251,146,60,.9)', 2);
   }
   ctx.save();
-  ctx.translate(...P(a.x, a.y));
+  ctx.translate(...P(ax, ay, az));
   ctx.scale(AGENT_SCALE, AGENT_SCALE);
   drawRobot(ctx, a, t);
   ctx.restore();
-  env.labels.push({ a, wx: a.x, wy: a.y, wz: ROBOT_BOUNDS.height * AGENT_SCALE / ZU + .35 });
+  if (env.selectedId === a.id) {
+    const [x, y] = P(ax, ay, az + ROBOT_BOUNDS.height * AGENT_SCALE / ZU + .95);
+    const bob = Math.sin(t * 3) * 2;
+    poly(ctx, [[x,y-9+bob],[x+5,y+bob],[x,y+9+bob],[x-5,y+bob]], '#6ee7b7', '#d1fae5', 1);
+  }
+  env.labels.push({ a, wx: ax, wy: ay, wz: az + ROBOT_BOUNDS.height * AGENT_SCALE / ZU + .35 });
 }
 
 function wrapText(ctx, text, maxWidth) {
@@ -365,6 +377,7 @@ export function createRenderer(canvas, agents) {
   const agentMap = Object.fromEntries(agents.map((a) => [a.id, a]));
   const view = { s: 1, ox: 0, oy: 0, w: 0, h: 0, dpr: 1 };
   let selectedId = null;
+  let hovered = null;
 
   function resize() {
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -386,18 +399,29 @@ export function createRenderer(canvas, agents) {
   const world = () => ctx.setTransform(view.dpr * view.s, 0, 0, view.dpr * view.s, view.dpr * view.ox, view.dpr * view.oy);
   const toScreen = (wx, wy, wz) => { const [px, py] = P(wx, wy, wz); return [view.ox + px * view.s, view.oy + py * view.s]; };
 
-  function hitTest(clientX, clientY) {
+  function pick(clientX, clientY) {
     const rect = canvas.getBoundingClientRect();
     const sx = clientX - rect.left;
     const sy = clientY - rect.top;
+    const wx = (sx - view.ox) / view.s, wy = (sy - view.oy) / view.s;
+    const hits = [];
+    for (const item of INTERACTABLES) {
+      if (boxHitFaces(item.bounds).some(face => pointInPolygon([wx, wy], face))) {
+        const [x,y,w,d] = item.bounds;
+        hits.push({kind:'furniture', item, depth:x + y + (w+d)/2});
+      }
+    }
     // 点击大脑袋也能选中角色；重叠时优先最前面的机器人。
     const visible = agents.filter(shouldShowOnFloor).sort((a, b) => (b.x + b.y) - (a.x + a.y));
     for (const a of visible) {
-      const [x, y] = toScreen(a.x, a.y, 0);
+      const [x, y] = toScreen(...scenePosition(a));
       const halfWidth = Math.max(10, ROBOT_BOUNDS.halfWidth * AGENT_SCALE * view.s);
       const height = ROBOT_BOUNDS.height * AGENT_SCALE * view.s;
-      if (Math.abs(sx - x) <= halfWidth && sy >= y - height && sy <= y + 4) return a;
+      if (Math.abs(sx - x) <= halfWidth && sy >= y - height && sy <= y + 4) {
+        hits.push({kind:'agent', agent:a, depth:agentDepth(a)});
+      }
     }
+    if (hits.length) return hits.sort((a,b) => b.depth-a.depth)[0];
     const px = (sx - view.ox) / view.s;
     const py = (sy - view.oy) / view.s;
     const gx = (px / (TW / 2) + py / (TH / 2)) / 2;
@@ -408,7 +432,12 @@ export function createRenderer(canvas, agents) {
       const d = Math.hypot(a.x - gx, a.y - gy);
       if (d < bestD) { bestD = d; best = a; }
     }
-    return best;
+    return best ? {kind:'agent',agent:best} : null;
+  }
+
+  function hitTest(clientX, clientY) {
+    const hit = pick(clientX, clientY);
+    return hit?.agent || (hit?.item?.agentId ? agentMap[hit.item.agentId] : null);
   }
 
   function draw(t, L) {
@@ -421,13 +450,35 @@ export function createRenderer(canvas, agents) {
     drawBackWalls(ctx, L);
     drawRugs(ctx);
 
+    const chosen = agentMap[selectedId];
+    if (chosen?.manualAction && chosen.path.length) {
+      ctx.save();
+      ctx.setLineDash([5, 5]);
+      ctx.strokeStyle = 'rgba(153,246,228,.85)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(...P(chosen.x, chosen.y, .03));
+      for (const [x,y] of chosen.path) ctx.lineTo(...P(x+.5,y+.5,.03));
+      ctx.stroke();
+      ctx.restore();
+    }
+    if (chosen?.manualAction && chosen.ambientSpot) {
+      const [x,y] = chosen.ambientSpot;
+      ellipseFloor(ctx,x+.5,y+.5,.03,.35,.35,'rgba(94,234,191,.1)','#6ee7b7',1.5);
+    }
+
     const list = items.map((it) => ({ k: it.k, f: it.draw }));
     for (const a of agents) {
       if (!shouldShowOnFloor(a)) continue;
-      list.push({ k: a.x + a.y + 0.001, f: (c) => drawAgent(c, a, t, env) });
+      list.push({ k: agentDepth(a), f: (c) => drawAgent(c, a, t, env) });
     }
     list.sort((p, q) => p.k - q.k);
     for (const it of list) it.f(ctx, env);
+    if (hovered?.kind === 'furniture') {
+      ctx.save();
+      for (const face of boxHitFaces(hovered.item.bounds)) poly(ctx,face,'rgba(110,231,183,.1)','#8de6cc',1.6);
+      ctx.restore();
+    }
 
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.save();
@@ -528,6 +579,11 @@ export function createRenderer(canvas, agents) {
 
   function setSelected(id) { selectedId = id; }
 
+  function setHovered(hit) { hovered = hit; }
+
+  // 方便定位场景对象；返回画布内 CSS 像素，和命中检测使用同一投影。
+  function project(x,y,z=0) { return toScreen(x,y,z); }
+
   resize();
-  return { resize, draw, hitTest, setSelected };
+  return { resize, draw, hitTest, pick, project, setSelected, setHovered };
 }

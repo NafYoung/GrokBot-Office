@@ -1,5 +1,5 @@
 // 空闲生活只控制动作，不改工作状态、新鲜度或真实任务日志。
-import { COFFEE, LOUNGE, STRETCH, STROLL } from './config.js';
+import { COFFEE, LOUNGE, STRETCH, STROLL, SOFA_SLOTS } from './config.js';
 import { hasFreshTask, shouldShowOnFloor } from './presence.js';
 
 export const LOAF = {
@@ -10,6 +10,9 @@ export const LOAF = {
 };
 
 export const LOAF_SPOTS = { coffee: COFFEE, stretch: STRETCH, lounge: LOUNGE, stroll: STROLL };
+export const SCENE_ACTIONS = {
+  coffee: '喝咖啡', lounge: '坐沙发', stretch: '伸懒腰', stroll: '散散步', home: '回工位',
+};
 
 export function canLoaf(agent) {
   if (!agent || agent.state !== 'idle' || !shouldShowOnFloor(agent)) return false;
@@ -22,6 +25,15 @@ export function canLoaf(agent) {
 export function leisureLabel(agent) {
   if (!agent.ambientLabel) return '';
   return `${hasFreshTask(agent) ? '摸鱼' : '日常动画'} · ${agent.ambientLabel}`;
+}
+
+// 家具坐姿只调整画面锚点，保留可走的落脚格，随时能起身返回工位。
+export function scenePosition(agent) {
+  if (agent.seated && agent.ambient === 'lounge' && agent.ambientStage === 'doing') {
+    const slot = SOFA_SLOTS.find(s => sameCell(s.approach, agent.ambientSpot));
+    if (slot) return slot.seat;
+  }
+  return [agent.x, agent.y, 0];
 }
 
 export function loafScript(agent, kind, spot, dwell) {
@@ -52,13 +64,43 @@ export class AmbientLife {
   range(a, b) { return a + this.rand() * (b - a); }
   pick(list) { return list[Math.floor(this.rand() * list.length)]; }
 
+  freeSpots(a, spots) {
+    return spots.filter(spot => !sameCell(spot, a.seat)
+      && !this.agents.some(other => other !== a
+        && (sameCell(spot, other.ambientSpot) || sameCell(spot, other.cell) || sameCell(spot, other.seat)))
+      && a.world.findPath(a.cell, spot) != null);
+  }
+
+  request(a, kind) {
+    if (!Object.hasOwn(SCENE_ACTIONS, kind)) return {ok:false, message:'这个动作暂不可用。'};
+    if (!canLoaf(a)) return {ok:false, message:'当前任务优先，空闲后才能安排日常动作。'};
+    if (a.activityKind || a.script.some(step => step.type === 'activity' && step.kind)) {
+      return {ok:false, message:'正在交接或开会，结束后再安排休息。'};
+    }
+    if (kind === 'home') {
+      this.sendHome(a);
+      a.script.push({type:'wait', t:20}, {type:'call', fn:() => { a.manualAction = null; }});
+      a.manualAction = kind;
+      a.loafIn = this.range(6, 14);
+      return {ok:true, message:`已安排 ${a.name} 回工位歇一会儿。`};
+    }
+    const spots = this.freeSpots(a, LOAF_SPOTS[kind]);
+    if (!spots.length) return {ok:false, message:'这里的位置暂时满了，试试别的活动。'};
+    spots.sort((x, y) => a.world.findPath(a.cell, x).length - a.world.findPath(a.cell, y).length);
+    const spot = spots[0];
+    a.interrupt([...loafScript(a, kind, spot, this.range(...LOAF[kind].dwell)),
+      {type:'call', fn:() => { a.manualAction = null; }}]);
+    a.ambientSpot = spot;
+    a.manualAction = kind;
+    a.lastLoaf = kind;
+    a.loafIn = this.range(12, 20);
+    return {ok:true, message:`已安排 ${a.name} ${SCENE_ACTIONS[kind]}。`};
+  }
+
   chooseActivity(a) {
     const options = Object.entries(LOAF_SPOTS).map(([kind, spots]) => ({
       kind,
-      spots: spots.filter((spot) => !sameCell(spot, a.seat)
-        && !this.agents.some((other) => other !== a
-          && (sameCell(spot, other.ambientSpot) || sameCell(spot, other.cell) || sameCell(spot, other.seat)))
-        && a.world.findPath(a.cell, spot) != null),
+      spots: this.freeSpots(a, spots),
     })).filter((option) => option.spots.length);
     if (!options.length) return null;
     const different = options.filter(({ kind }) => kind !== a.lastLoaf);

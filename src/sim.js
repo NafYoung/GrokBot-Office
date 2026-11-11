@@ -70,6 +70,13 @@ export class Simulation {
     }) || null;
   }
 
+  sceneAction(ref, kind) {
+    const a = this.find(ref);
+    if (!a) return {ok:false, message:'先选中一个 Bot，再安排动作。'};
+    if (this.running && !this.demoRest) return {ok:false, message:'工作演示正在自动排班；退出演示后可以安排动作。'};
+    return this.ambient.request(a, kind);
+  }
+
   convene() {
     return this.byId[CONVENE_ID] || this.agents.find((a) => a.cfg.kind === 'resident') || this.agents[0];
   }

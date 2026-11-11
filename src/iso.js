@@ -6,6 +6,20 @@ export const ZU = 34;  // 高度 1 单位对应的像素
 
 export const P = (x, y, z = 0) => [((x - y) * TW) / 2, ((x + y) * TH) / 2 - z * ZU];
 
+export function boxHitFaces([x, y, w, d, h]) {
+  const A=P(x,y,h), B=P(x+w,y,h), C=P(x+w,y+d,h), D=P(x,y+d,h);
+  return [[A,B,C,D], [D,C,P(x+w,y+d),P(x,y+d)], [B,C,P(x+w,y+d),P(x+w,y)]];
+}
+
+export function pointInPolygon([x, y], points) {
+  let inside = false;
+  for (let i=0, j=points.length-1; i<points.length; j=i++) {
+    const [xi,yi]=points[i], [xj,yj]=points[j];
+    if ((yi > y) !== (yj > y) && x < (xj-xi)*(y-yi)/(yj-yi)+xi) inside = !inside;
+  }
+  return inside;
+}
+
 const hex = (c) => {
   const n = parseInt(c.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];

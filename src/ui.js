@@ -3,7 +3,7 @@ import { OFFICE, STATES, PRESENCE, WORKING_STATES } from './config.js';
 import { formatAge, statusCaption, hasFreshTask } from './presence.js';
 import { drawRobotPortrait } from './robot.js';
 import { activeTasks, taskPanel, diagnosticPanel, connectorPanel } from './telemetry.js';
-import { leisureLabel } from './ambient.js';
+import { leisureLabel, canLoaf, SCENE_ACTIONS } from './ambient.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = (id) => document.getElementById(id);
@@ -24,7 +24,7 @@ function contactNote(a) {
   return a.role;
 }
 
-export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
+export function createUI(agents, { onDemo, onMode, onSelect, onAction, freshness }) {
   $('title').textContent = `${OFFICE.owner} 的 ${OFFICE.title}`;
   document.title = `${OFFICE.owner} 的 ${OFFICE.title}`;
   $('ownerName').textContent = OFFICE.owner;
@@ -43,6 +43,46 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
   let selectedId = null;
   let lastSig = '';
   let connector = {};
+  let feedbackTimer = null;
+
+  function actionFeedback(result) {
+    clearTimeout(feedbackTimer);
+    $('actionFeedback').textContent = result.message;
+    $('actionFeedback').dataset.ok = String(result.ok);
+    feedbackTimer = setTimeout(() => { $('actionFeedback').textContent = ''; }, 6000);
+  }
+
+  function performAction(kind) {
+    if (feed === 'locked' && uiMode !== 'demo') return;
+    const result = onAction?.(selectedId, kind) || {ok:false, message:'先选中一个 Bot。'};
+    actionFeedback(result);
+    lastSig = '';
+    update();
+  }
+
+  function renderActions() {
+    $('actionDock').hidden = feed === 'locked' && uiMode !== 'demo';
+    const a = agents.find(x => x.id === selectedId);
+    $('actionEmpty').hidden = Boolean(a);
+    $('actionContent').hidden = !a;
+    if (!a) return;
+    const demoWork = uiMode === 'demo' && demoKind !== 'rest';
+    const taskActivity = a.activityKind || a.script.some(step => step.type === 'activity' && step.kind);
+    const available = canLoaf(a) && !taskActivity && !demoWork;
+    $('actionName').textContent = a.name;
+    $('actionDoing').textContent = a.ambientLabel || a.activityLabel
+      || (a.manualAction === 'home' ? (a.seated ? '在工位歇一会儿' : '正在回工位') : caption(a));
+    $('actionNote').textContent = demoWork ? '工作演示正在自动排班；退出演示后可以安排动作。'
+      : taskActivity ? '正在交接或开会，结束后再安排休息。'
+      : !canLoaf(a) ? '当前任务优先；空闲后才能安排日常动作。'
+      : '也可直接点家具安排动作；真实任务到达会自动接管。';
+    for (const button of document.querySelectorAll('[data-scene-action]')) {
+      button.disabled = !available;
+      button.setAttribute('aria-pressed', String(a.manualAction === button.dataset.sceneAction));
+      button.title = `${a.name} · ${SCENE_ACTIONS[button.dataset.sceneAction]}`;
+    }
+    drawRobotPortrait($('actionPortrait'), a);
+  }
 
   function setTelemetry(data) {
     if (data.connector) connector = data.connector;
@@ -124,6 +164,8 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
   }
 
   function select(id) {
+    clearTimeout(feedbackTimer);
+    $('actionFeedback').textContent = '';
     selectedId = id;
     onSelect?.(id);
     lastSig = '';
@@ -210,7 +252,7 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
   function update(nowSec = Date.now() / 1000) {
     const sig = [
       uiMode, feed, selectedId, JSON.stringify(connector), formatAge(connector.lastSuccessAt, nowSec),
-      ...agents.map((a) => `${a.id}:${a.presence}:${a.taskPresence}:${a.state}:${a.text}:${a.activityLabel}:${a.ambientLabel}:${formatAge(a.lastSeenTs, nowSec)}:${formatAge(a.lastStatusTs, nowSec)}:${JSON.stringify(a.tasks)}:${JSON.stringify(a.diagnostic)}`),
+      ...agents.map((a) => `${a.id}:${a.presence}:${a.taskPresence}:${a.state}:${a.text}:${a.activityLabel}:${a.ambientLabel}:${a.manualAction}:${a.seated}:${formatAge(a.lastSeenTs, nowSec)}:${formatAge(a.lastStatusTs, nowSec)}:${JSON.stringify(a.tasks)}:${JSON.stringify(a.diagnostic)}`),
     ].join('|');
     if (sig === lastSig) return;
     lastSig = sig;
@@ -246,6 +288,7 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
       </button>`;
     }).join('');
     renderSelected(nowSec);
+    renderActions();
     $('connectionStatus').innerHTML = connectorPanel(connector, nowSec);
     $('connectionBots').innerHTML = agents.map(a => `<button type="button" data-bot="${esc(a.id)}"><span>${esc(a.name)}</span><small>${esc(a.diagnostic.lastRejectedAt > (a.diagnostic.lastAcceptedAt || 0) ? '上报被拒绝' : caption(a))}</small></button>`).join('');
     for (const canvas of document.querySelectorAll('[data-bot-portrait]')) {
@@ -267,6 +310,14 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
   }
 
   const clearLog = () => { $('activity').innerHTML = ''; };
+  $('actionClose').addEventListener('click', () => select(null));
+  $('actionDock').addEventListener('click', e => {
+    const button = e.target.closest('[data-scene-action]');
+    if (button && !button.disabled) performAction(button.dataset.sceneAction);
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') select(null);
+  });
   $('connectionBots').addEventListener('click', e => {
     const button = e.target.closest('[data-bot]');
     if (button) select(button.dataset.bot);
@@ -274,7 +325,7 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
 
   setUiMode('live');
   return {
-    update, addLog, clearLog, select, setTelemetry,
+    update, addLog, clearLog, select, setTelemetry, performAction, actionFeedback,
     setUiMode, setFeed,
     get mode() { return uiMode; },
     get feed() { return feed; },

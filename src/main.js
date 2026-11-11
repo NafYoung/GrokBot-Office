@@ -40,6 +40,7 @@ const ui = createUI(agents, {
   freshness,
   onMode: (m) => { tod = m; },
   onSelect: (id) => renderer.setSelected(id),
+  onAction: (id, kind) => sim.sceneAction(id, kind),
   onDemo: (on, kind = 'work') => {
     closeLive();
     sim.stop();
@@ -65,15 +66,35 @@ const resizeObserver = new ResizeObserver(() => renderer.resize());
 resizeObserver.observe(canvas);
 resizeObserver.observe(document.querySelector('.topbar'));
 canvas.addEventListener('click', (e) => {
-  const hit = renderer.hitTest(e.clientX, e.clientY);
-  ui.select(hit ? hit.id : null);
+  if (ui.feed === 'locked' && ui.mode !== 'demo') return;
+  const hit = renderer.pick(e.clientX, e.clientY);
+  if (hit?.kind === 'agent') ui.select(hit.agent.id);
+  else if (hit?.kind === 'furniture') {
+    const item = hit.item;
+    if (item.agentId && item.agentId !== ui.selectedId) ui.select(item.agentId);
+    else if (!ui.selectedId) ui.actionFeedback({ok:false, message:`先选一个 Bot，再点${item.label}。`});
+    else ui.performAction(item.action);
+  } else ui.select(null);
 });
+canvas.addEventListener('pointermove', e => {
+  const hit = renderer.pick(e.clientX,e.clientY);
+  renderer.setHovered(hit);
+  canvas.style.cursor = hit ? 'pointer' : 'default';
+  canvas.title = hit?.kind === 'agent' ? `选中 ${hit.agent.name}`
+    : hit?.kind === 'furniture' ? (hit.item.agentId ? `${byId[hit.item.agentId].name} 的工位`
+      : `${hit.item.label} · ${ui.selectedId ? '点击安排日常' : '先选一个 Bot'}`) : '';
+});
+canvas.addEventListener('pointerleave', () => { renderer.setHovered(null); canvas.title = ''; });
 
 function onLiveEvent(ev, immediate = false) {
   if (ui.mode === 'demo') return;
   const current = ev.type === 'handoff' ? { ...ev, tasks: ev.current?.tasks, diagnostic: ev.current?.diagnostic }
     : ev.current || ev;
+  const hadManualAction = byId[ev.agent]?.manualAction;
   if (!sim.applyEvent(current, { immediate, quiet: true, keepPose: ev.silent })) console.warn('[office] ignored event', ev);
+  if (!immediate && hadManualAction && !byId[ev.agent]?.manualAction && ui.selectedId === ev.agent) {
+    ui.actionFeedback({ok:true, message:'收到新的任务或交接状态，已结束日常安排。'});
+  }
   if (!immediate && !ev.silent && ev.type !== 'sync') {
     const agent = byId[ev.agent];
     if (agent) ui.addLog({ agent, text: eventText(ev), demo: false, ts: ev.ts });
@@ -228,4 +249,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 
-window.office = { world, agents, sim, ui, freshness, apply: (e) => sim.applyEvent(e) };
+window.office = { world, agents, sim, ui, renderer, freshness, apply: (e) => sim.applyEvent(e) };

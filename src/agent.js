@@ -49,6 +49,7 @@ export class Agent {
     this.ambientSpot = null;
     this.activityLabel = '';
     this.activityKind = null;
+    this.manualAction = null;
     this.lastLoaf = null;
     this.loafIn = null;
     this.lastTask = null;
@@ -70,6 +71,7 @@ export class Agent {
   }
 
   snapToSeat() {
+    this.manualAction = null;
     this.x = this.seat[0] + 0.5;
     this.y = this.seat[1] + 0.5;
     this.fx = 0;
@@ -109,6 +111,7 @@ export class Agent {
   }
 
   clearPose() {
+    this.manualAction = null;
     this.carry = false;
     this.prop = null;
     this.ambient = null;

@@ -7,13 +7,37 @@ button { font: inherit; }
 .app {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 340px;
-  grid-template-areas: "banner banner" "stage side";
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "banner banner" "stage side" "controls side";
+  grid-template-rows: auto minmax(0, 1fr) auto;
   height: 100dvh;
   min-height: 100dvh;
 }
 .stage { grid-area: stage; position: relative; min-width: 0; min-height: 0; background: radial-gradient(ellipse at 50% 40%, #101a30 0%, #0a1020 70%); }
 #office { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: pointer; }
+
+.action-dock { grid-area: controls; min-width: 0; padding: 12px 18px; background: linear-gradient(135deg, #12202b, #101a2e); border-top: 1px solid #284455; }
+.action-empty { text-align: center; color: #a0b6c5; padding: 7px; }
+.action-empty span { color: #72e4c1; margin-right: 8px; font-size: 20px; }
+#actionContent { max-width: 760px; margin: auto; display: grid; grid-template-columns: minmax(140px, 1fr) auto; column-gap: 18px; row-gap: 7px; align-items: center; }
+.action-character { display: flex; align-items: center; min-width: 0; gap: 10px; }
+#actionPortrait { width: 50px; height: 50px; flex: none; border-radius: 16px; background: #173747; border: 1px solid #366772; }
+.action-name { min-width: 0; flex: 1; }
+.action-name small { display: block; font-size: 10px; color: #6edbc0; letter-spacing: 1px; }
+.action-name b { display: block; margin: 3px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#actionDoing { font-size: 11px; color: #acbfcd; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#actionClose { align-self: start; color: #9bb0bf; background: transparent; border: 0; cursor: pointer; font-size: 22px; padding: 0 4px; }
+.action-buttons { display: flex; gap: 7px; }
+.action-buttons button { min-width: 57px; padding: 7px 9px; border: 1px solid #365165; border-radius: 12px; background: #1a2c3d; color: #dbe7ee; cursor: pointer; font-size: 11px; }
+.action-buttons button span { display: block; font-size: 20px; height: 26px; color: #88e2c5; }
+.action-buttons button:hover:enabled { border-color: #6bd9ba; background: #24433f; transform: translateY(-2px); }
+.action-buttons button[aria-pressed="true"] { background: #214c43; border-color: #6bd9ba; }
+.action-buttons button:disabled { opacity: .4; cursor: not-allowed; }
+.action-dock button:focus-visible { outline: 2px solid #99f6e4; outline-offset: 3px; }
+.action-note { grid-column: 1 / -1; color: #8299aa; font-size: 11px; }
+.action-feedback { color: #99f6d8; font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+.action-feedback:empty { display: none; }
+.action-feedback:not(:empty) { margin-top: 8px; }
+.action-feedback[data-ok="false"] { color: #f4cb89; }
 
 .demo-banner {
   position: sticky; top: 0; z-index: 20; grid-area: banner;
@@ -168,8 +192,8 @@ button { font: inherit; }
 
 @media (max-width: 900px) {
   .app {
-    grid-template-columns: minmax(0, 1fr); grid-template-areas: "banner" "stage" "side";
-    grid-template-rows: auto minmax(420px, 56dvh) auto; height: auto;
+    grid-template-columns: minmax(0, 1fr); grid-template-areas: "banner" "stage" "controls" "side";
+    grid-template-rows: auto minmax(420px, 56dvh) auto auto; height: auto;
   }
   .stage { min-height: 420px; }
   .side {
@@ -185,6 +209,12 @@ button { font: inherit; }
   .brand { padding-right: 118px; min-height: 80px; align-content: start; }
   .stats { gap: 6px; }
   .stat { padding: 3px 8px; font-size: 11px; }
+  .action-dock { padding: 10px 12px; }
+  #actionContent { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  #actionPortrait { width: 42px; height: 42px; }
+  .action-buttons { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 5px; }
+  .action-buttons button { min-width: 0; padding: 6px 2px; }
+  .action-buttons button span { height: 23px; font-size: 18px; }
 }
 
 @media (max-width: 520px) {
