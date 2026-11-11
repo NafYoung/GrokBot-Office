@@ -33,6 +33,7 @@ button { font: inherit; }
 .stat { display: flex; align-items: center; gap: 6px; font-size: 11.5px; padding: 4px 10px; border-radius: 999px; background: rgba(17, 24, 39, .85); border: 1px solid #1f2a44; color: #cbd5e1; }
 .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .feed-banner { margin-top: 8px; font-size: 12px; color: #93a4c3; max-width: 42rem; }
+.life-hint { margin-top: 4px; font-size: 11px; color: #b5a685; }
 
 .legend {
   position: absolute; left: 14px; bottom: 14px; z-index: 2;

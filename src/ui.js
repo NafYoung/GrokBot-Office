@@ -3,6 +3,7 @@ import { OFFICE, STATES, PRESENCE, WORKING_STATES } from './config.js';
 import { formatAge, statusCaption, hasFreshTask } from './presence.js';
 import { drawRobotPortrait } from './robot.js';
 import { activeTasks, taskPanel, diagnosticPanel, connectorPanel } from './telemetry.js';
+import { leisureLabel } from './ambient.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const $ = (id) => document.getElementById(id);
@@ -119,6 +120,7 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
     $('authForm').hidden = uiMode === 'demo' || feed !== 'locked';
     $('integrationCard').hidden = uiMode === 'demo' || feed === 'locked';
     $('connectionCard').hidden = uiMode === 'demo' || feed === 'locked';
+    $('lifeHint').hidden = uiMode === 'demo' || feed === 'locked';
   }
 
   function select(id) {
@@ -158,10 +160,10 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
   });
 
   function caption(a) {
-    if (a.presence === 'fresh' && a.lastStatusTs == null && !a.demoActive) return '在岗 · 未上报状态';
-    if (a.presence === 'fresh' && !hasFreshTask(a)) return '在岗 · 任务状态过期';
-    const base = statusCaption({ presence: a.presence, state: a.state, STATES, PRESENCE, kind: a.cfg.kind });
-    if (a.presence === 'fresh' && a.ambientLabel) return `摸鱼 · ${a.ambientLabel}`;
+    const base = a.presence === 'fresh' && a.lastStatusTs == null && !a.demoActive ? '在岗 · 未上报状态'
+      : a.presence === 'fresh' && !hasFreshTask(a) ? '在岗 · 任务状态过期'
+      : statusCaption({ presence: a.presence, state: a.state, STATES, PRESENCE, kind: a.cfg.kind });
+    if (a.ambientLabel) return hasFreshTask(a) ? leisureLabel(a) : `${base} · 日常动画`;
     return base;
   }
 
@@ -200,7 +202,7 @@ export function createUI(agents, { onDemo, onMode, onSelect, freshness }) {
       <p class="sel-text">${esc(a.text || '尚未收到任务上报')}</p>
       ${a.lastStatusTs != null ? `<p class="muted">任务上报：${esc(formatAge(a.lastStatusTs, nowSec))}</p>` : ''}
       ${a.activityLabel ? `<p class="sel-loaf">活动：${esc(a.activityLabel)}</p>` : ''}
-      ${a.ambientLabel ? `<p class="sel-loaf">摸鱼：${esc(a.ambientLabel)}</p>` : ''}
+      ${a.ambientLabel ? `<p class="sel-loaf">${esc(leisureLabel(a))}</p>` : ''}
       <p class="muted sel-note">${esc(contactNote(a))}</p>
       ${uiMode === 'live' ? taskPanel(a, nowSec, freshness?.staleAfterSec) + diagnosticPanel(a, nowSec, freshness?.staleAfterSec) : ''}`;
   }

@@ -94,6 +94,20 @@ def run(screenshots=None):
             assert all('/api/office' not in url for url in requests)
             results['login'] = 'wrong token rejected; session unlocks SSE without storing token'
 
+            # Daily life starts without making a single synthetic status event.
+            page.wait_for_function('window.office.agents.some(a=>a.ambientStage === "doing")')
+            daily_id = page.evaluate('window.office.agents.find(a=>a.ambientStage === "doing").id')
+            page.locator(f'li[data-id="{daily_id}"]').click()
+            page.locator('#selected .sel-loaf').get_by_text('日常动画', exact=False).wait_for()
+            assert page.locator('#lifeHint').is_visible()
+            assert page.evaluate('window.office.agents.every(a=>a.lastSeenTs == null && a.lastStatusTs == null && a.text === "")')
+            assert page.locator('#activity li').count() == 0
+            assert '0 工作中' in page.locator('#stats').inner_text()
+            assert '0 空闲' in page.locator('#stats').inner_text()
+            assert srv.hub.sequence == 0 and not event_posts
+            shot(page, 'daily-without-reports')
+            results['default_daily_life'] = 'unreported residents animate with daily labels; no fake contact, tasks, live counts or POSTs'
+
             page.locator('#integrationCard summary').click()
             page.locator('#generateIntegration').click()
             assert '请先选择' in page.locator('#integrationMessage').inner_text()
@@ -273,6 +287,53 @@ def run(screenshots=None):
             assert '1 工作中' in audit.locator('#stats').inner_text()
             results['task_freshness'] = 'handoff keeps task stale in scene, counts and restored snapshot; a real status makes it current'
             audit.close()
+
+            daily = context.new_page()
+            daily.on('pageerror', lambda error: errors.append(str(error)))
+            daily.on('request', lambda request: event_posts.append(request.url)
+                     if request.method == 'POST' and request.url.endswith('/api/events') else None)
+            publish({'agent':'ziliao','state':'idle','text':'日常验收：上一项任务已结束'})
+            daily.goto(base + '/?stale=1&offline=2')
+            daily.wait_for_function('window.office.ui.feed === "open" && window.office.agents.find(a=>a.id==="ziliao").lastStatusTs != null')
+            idle_ts = daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").lastStatusTs')
+            idle_seq = srv.hub.sequence
+            daily.wait_for_function('''() => {
+              const a=window.office.agents.find(a=>a.id==='ziliao');
+              return a.presence === 'offline' && a.ambientStage === 'doing';
+            }''')
+            daily.locator('#aux li[data-id="ziliao"]').click()
+            daily.locator('#selected .sel-loaf').get_by_text('日常动画', exact=False).wait_for()
+            assert '离线' in daily.locator('#selected .sel-state').inner_text()
+            assert '上一项任务已结束' in daily.locator('#selected .sel-text').inner_text()
+            assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").lastStatusTs') == idle_ts
+            assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").lastSeenTs') == idle_ts
+            assert srv.hub.sequence == idle_seq
+            shot(daily, 'daily-after-idle-expired')
+            for width, height in [(390,844), (320,568)]:
+                daily.set_viewport_size({'width':width,'height':height})
+                bounds = layout(daily)
+                assert not bounds['overflow'] and not bounds['cardsOverlap'], bounds
+                assert daily.locator('#lifeHint').is_visible()
+                if width == 390:
+                    daily.locator('.stage').scroll_into_view_if_needed()
+                    shot(daily, 'daily-mobile')
+            publish({'type':'task','agent':'ziliao','taskId':'daily-acceptance','eventId':'daily-start','phase':'started',
+                     'revision':1,'state':'coding','text':'日常验收：开始整理资料'})
+            state(daily, 'ziliao', 'coding')
+            assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").ambient === null')
+            assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").ambientSpot === null')
+            daily.wait_for_function('''() => {
+              const a=window.office.agents.find(a=>a.id==='ziliao');
+              return a.seated && a.cell.join() === a.seat.join();
+            }''')
+            publish({'type':'task','agent':'ziliao','taskId':'daily-acceptance','eventId':'daily-done','phase':'completed',
+                     'revision':2,'text':'日常验收：资料整理完成'})
+            state(daily, 'ziliao', 'idle')
+            daily.wait_for_function('window.office.agents.find(a=>a.id==="ziliao").ambient != null')
+            assert daily.evaluate('window.office.agents.find(a=>a.id==="ziliao").tasks[0].phase') == 'completed'
+            assert not event_posts
+            daily.close()
+            results['persistent_daily_life'] = 'idle animations survive expiration; task start interrupts and returns to desk; completion resumes leisure without synthetic events'
 
             # Multi-task protocol through the actual CLI client, HTTP, SSE and detail UI.
             page.set_viewport_size({'width':1440,'height':1000})

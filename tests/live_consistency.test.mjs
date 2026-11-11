@@ -80,20 +80,20 @@ test('新交接不会让过期任务重新变成新鲜，刷新快照结果一�
     assert.equal(grok.presence, 'fresh');
     assert.equal(grok.taskPresence, 'stale');
     assert.equal(hasFreshTask(grok), false);
-    assert.equal(canLoaf(grok), false);
+    assert.equal(canLoaf(grok), state === 'idle');
     assert.equal(grok.lastStatusTs, old);
     assert.equal(guan.lastSeenTs, null, '不能把交接目标当作已上报');
     sim.stop();
     sim.applyEvent({ agent: 'grok', state, text: '旧任务状态', ts: old, seen: now, seq: 2 }, { immediate: true });
     assert.equal(grok.presence, 'fresh');
     assert.equal(hasFreshTask(grok), false);
-    assert.equal(canLoaf(grok), false);
+    assert.equal(canLoaf(grok), state === 'idle');
     sim.applyEvent({ agent: 'grok', state, text: '最新状态', ts: now, seq: 3 });
     assert.equal(hasFreshTask(grok), true);
   }
 });
 
-test('任务时间独立过期，旧 idle 不会因为新的联系时间继续摸鱼', () => {
+test('任务时间独立过期，旧 idle 的日常活动不伪造新鲜任务', () => {
   const { sim, tick, grok } = build();
   const now = Date.now() / 1000;
   sim.applyEvent({ agent: 'grok', state: 'idle', text: '等待任务', ts: now });
@@ -103,9 +103,11 @@ test('任务时间独立过期，旧 idle 不会因为新的联系时间继续�
   grok.lastSeenTs = now + FRESHNESS.staleAfterSec;
   sim.refreshPresence(now + FRESHNESS.staleAfterSec + 1);
   assert.equal(grok.presence, 'fresh');
-  assert.equal(canLoaf(grok), false);
+  assert.equal(canLoaf(grok), true);
+  assert.equal(hasFreshTask(grok), false);
   tick(.1);
-  assert.equal(grok.ambient, null);
+  assert.ok(grok.ambient);
+  assert.equal(grok.lastStatusTs, now);
 });
 
 test('全员会议只带动新鲜成员，未上报或过期的主持人不能凭空开会', () => {

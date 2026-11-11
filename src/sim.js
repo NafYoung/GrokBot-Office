@@ -260,6 +260,7 @@ export class Simulation {
         return true;
       }
       // 工作状态与日志立即生效；回座位只负责表现，不延迟错误或待办提醒。
+      if (ev.state === 'idle' && a.state !== 'idle') a.loafIn = this.range(2, 7);
       a.state = ev.state;
       a.text = text;
       if (!quiet) this.log(a, text, { demo: false, ts: ev.ts });

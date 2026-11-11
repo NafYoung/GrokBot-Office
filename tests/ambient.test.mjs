@@ -4,7 +4,7 @@ import { World } from '../src/world.js';
 import { Agent } from '../src/agent.js';
 import { Simulation } from '../src/sim.js';
 import { AGENTS, COFFEE, STRETCH, LOUNGE, STROLL } from '../src/config.js';
-import { canLoaf, LOAF, loafScript } from '../src/ambient.js';
+import { canLoaf, leisureLabel, LOAF, loafScript } from '../src/ambient.js';
 
 const build = () => {
   const world = new World();
@@ -30,18 +30,39 @@ test('咖啡位、伸展位、休息位和散步位都能从每个座位走到',
   }
 });
 
-test('没收到事件的人不会去摸鱼', () => {
-  const { agents, sim } = build();
+test('默认常驻角色有日常活动，但不生成在线状态、任务时间或日志', () => {
+  const { agents, sim, logs } = build();
   for (const a of agents) a.loafIn = 0;
+  const before = agents.map(a => ({presence:a.presence, state:a.state, text:a.text}));
+  const moved = new Set();
+  for (let t = 0; t < 30; t += .1) {
+    step(agents, sim, .1);
+    for (const a of agents) if (a.moving) moved.add(a.id);
+  }
+  assert.ok(moved.size >= 6, `日常活动成员数量 ${moved.size}`);
+  assert.equal(moved.has('eggbot'), false);
+  assert.deepEqual(agents.map(a => ({presence:a.presence,state:a.state,text:a.text})), before);
+  assert.ok(agents.every(a => a.lastSeenTs == null && a.lastStatusTs == null));
+  assert.equal(logs.length, 0);
+  assert.ok(agents.some(a => leisureLabel(a).startsWith('日常动画')));
+});
+
+test('忙碌、等待确认和出错的任务即使过期也不能擅自当作空闲', () => {
+  const { agents, sim } = build();
+  const cast = agents.slice(0, 4);
+  for (const [i, a] of cast.entries()) {
+    sim.applyEvent({agent:a.id,state:['coding','browsing','needsYou','error'][i],text:'尚未结束',ts:1},{immediate:true});
+    a.loafIn = 0;
+  }
   step(agents, sim, 20);
-  for (const a of agents) {
+  for (const a of cast) {
     assert.equal(canLoaf(a), false);
     assert.equal(a.ambient, null);
     assert.deepEqual(a.cell, a.seat);
   }
 });
 
-test('实时空闲才会去倒咖啡、活动或坐沙发，而且状态仍是空闲', () => {
+test('已确认空闲会去倒咖啡、活动或坐沙发，而且状态仍是空闲', () => {
   const { agents, sim, logs } = build();
   const qiwen = agents.find((a) => a.id === 'qiwen');
   sim.applyEvent({ agent: 'qiwen', state: 'idle', text: '这会儿没事' });
@@ -80,7 +101,7 @@ test('重复的 idle 不会把正在摸鱼的人拽回工位', () => {
   assert.notEqual(qiwen.script[0]?.type, 'set');
 });
 
-test('新的工作会打断摸鱼，过期则停止并走回座位', () => {
+test('空闲上报过期后日常继续，新的工作会立即打断摸鱼并回座位', () => {
   const { agents, sim } = build();
   const qiwen = agents.find((a) => a.id === 'qiwen');
   const guan = agents.find((a) => a.id === 'guan');
@@ -93,8 +114,10 @@ test('新的工作会打断摸鱼，过期则停止并走回座位', () => {
   assert.ok(qiwen.ambient);
   assert.ok(guan.ambient);
   guan.presence = 'offline';
+  guan.taskPresence = 'offline';
   sim.update(0.1);
-  assert.equal(guan.ambient, null);
+  assert.ok(guan.ambient);
+  assert.ok(leisureLabel(guan).startsWith('日常动画'));
   sim.applyEvent({ agent: 'qiwen', state: 'coding', text: '开始写' });
   assert.equal(qiwen.ambient, null);
   assert.equal(qiwen.prop, null);
@@ -102,8 +125,8 @@ test('新的工作会打断摸鱼，过期则停止并走回座位', () => {
   assert.equal(qiwen.state, 'coding');
   assert.equal(qiwen.text, '开始写');
   assert.deepEqual(qiwen.cell, qiwen.seat);
-  assert.deepEqual(guan.cell, guan.seat);
-  assert.equal(guan.ambient, null);
+  assert.equal(canLoaf(guan), true);
+  assert.equal(guan.presence, 'offline');
 });
 
 test('同时空闲的同事预留不同位置，下一轮换一种活动', () => {
@@ -173,7 +196,7 @@ test('休息演示持续保持空闲，会用到四种活动且不生成任务�
   assert.ok(agents.every((a) => a.ambientSpot == null && a.lastSeenTs == null && !a.demoActive));
 });
 
-test('任务抢占释放休息位置，刚排定的动作也会因过期取消', () => {
+test('任务抢占释放休息位置，刚排定的动作也立即取消', () => {
   const { agents, sim } = build();
   const a = agents.find((a) => a.id === 'qiwen');
   sim.applyEvent({ agent: a.id, state: 'idle' });
@@ -181,11 +204,10 @@ test('任务抢占释放休息位置，刚排定的动作也会因过期取消',
   a.loafIn = 0;
   sim.update(0.1);
   assert.ok(a.ambientSpot);
-  a.presence = 'stale';
-  sim.update(0.1);
+  sim.applyEvent({agent:a.id,state:'coding',text:'开始工作'});
   assert.equal(a.ambientSpot, null);
   step(agents, sim, 2);
-  a.presence = 'fresh';
+  sim.applyEvent({agent:a.id,state:'idle',text:'工作完成'});
   a.loafIn = 0;
   step(agents, sim, 2);
   assert.ok(a.ambientSpot);
@@ -196,4 +218,34 @@ test('任务抢占释放休息位置，刚排定的动作也会因过期取消',
   assert.equal(a.prop, null);
   step(agents, sim, 20);
   assert.equal(a.state, 'needsYou');
+});
+
+test('空闲一小时仍持续活动，恢复快照和下一项任务都保留真实记录', () => {
+  const { agents, sim, logs } = build();
+  const a = sim.find('guan');
+  const finishedAt = Date.now() / 1000 - 3600;
+  sim.applyEvent({agent:a.id,state:'idle',text:'上个任务已完成',ts:finishedAt},{immediate:true});
+  a.loafIn = 0;
+  const phases = new Set();
+  for (let t = 0; t < 120; t += .1) {
+    sim.refreshPresence(Date.now() / 1000);
+    step(agents, sim, .1);
+    if (a.ambient) phases.add(a.ambient);
+    assert.equal(a.lastSeenTs, finishedAt);
+    assert.equal(a.lastStatusTs, finishedAt);
+    assert.equal(a.presence, 'offline');
+    assert.equal(a.text, '上个任务已完成');
+  }
+  assert.ok(phases.size >= 2);
+  assert.equal(logs.length, 0);
+  sim.applyEvent({agent:a.id,state:'terminal',text:'新的真实任务'});
+  assert.equal(a.ambient, null);
+  assert.equal(a.prop, null);
+  step(agents, sim, 15);
+  assert.equal(a.text, '新的真实任务');
+  assert.deepEqual(a.cell, a.seat);
+  sim.applyEvent({agent:a.id,state:'idle',text:'新任务完成'});
+  step(agents, sim, 8);
+  assert.ok(a.ambient);
+  assert.equal(a.text, '新任务完成');
 });

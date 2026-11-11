@@ -1,6 +1,7 @@
 // 渲染器：把 world + agents 画到 canvas。只读状态，不改状态。
 import { GRID, DESKS, RUGS, WALLS, STATES, PRESENCE, FONT, OFFICE } from './config.js';
 import { shouldShowOnFloor, hasFreshTask } from './presence.js';
+import { leisureLabel } from './ambient.js';
 import { drawRobot, ROBOT_BOUNDS } from './robot.js';
 import {
   TW, TH, ZU, P, box, cyl, blob, quad3, poly, ellipseFloor, shade, rgb, hexToRgb,
@@ -350,7 +351,7 @@ function wrapText(ctx, text, maxWidth) {
 }
 
 function bubbleText(a) {
-  if (hasFreshTask(a) && a.ambientLabel) return a.ambientLabel;
+  if (a.ambientLabel) return leisureLabel(a);
   if (a.presence === 'fresh' && a.activityLabel) return a.activityLabel;
   if (hasFreshTask(a) && a.text) return a.text;
   if (hasFreshTask(a) && (a.state === 'needsYou' || a.state === 'error')) return STATES[a.state].label;
@@ -494,15 +495,15 @@ export function createRenderer(canvas, agents) {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     ctx.font = `600 11px ${FONT}`;
     ctx.textBaseline = 'middle';
+    const featured = agents.filter(a => shouldShowOnFloor(a) && a.ambientStage === 'doing')
+      .slice(0, view.w < 720 ? 1 : 2);
     for (const { a, sx, sy } of placeTags(labels)) {
       const text = bubbleText(a);
       if (!text) continue;
-      if (view.w < 720 && a.id !== selectedId && !['needsYou', 'error'].includes(a.state)) {
-        // 手机最多展示一个休息气泡，避免所有人同时说话遮住楼面。
-        const featured = agents.find((agent) => agent.ambientStage === 'doing');
-        if (!a.ambientLabel || a !== featured) continue;
-      }
-      if (a.presence !== 'fresh' && a.id !== selectedId && a.state !== 'needsYou' && a.state !== 'error') continue;
+      // 日常气泡桌面最多两个、手机一个；点选角色始终能看清它的动作。
+      if (a.ambientLabel && a.id !== selectedId && !featured.includes(a)) continue;
+      if (view.w < 720 && a.id !== selectedId && !['needsYou', 'error'].includes(a.state) && !a.ambientLabel) continue;
+      if (a.presence !== 'fresh' && a.id !== selectedId && !a.ambientLabel && a.state !== 'needsYou' && a.state !== 'error') continue;
       const lines = wrapText(ctx, text, 148);
       const tw = Math.max(...lines.map((ln) => ctx.measureText(ln).width));
       const w = Math.min(164, tw + 16);

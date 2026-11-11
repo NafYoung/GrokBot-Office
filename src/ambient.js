@@ -1,6 +1,6 @@
 // 空闲生活只控制动作，不改工作状态、新鲜度或真实任务日志。
 import { COFFEE, LOUNGE, STRETCH, STROLL } from './config.js';
-import { hasFreshTask } from './presence.js';
+import { hasFreshTask, shouldShowOnFloor } from './presence.js';
 
 export const LOAF = {
   coffee: { go: '去接杯咖啡', doing: '慢慢喝咖啡', back: '端着咖啡回工位', prop: 'cup', dwell: [6, 10] },
@@ -12,10 +12,16 @@ export const LOAF = {
 export const LOAF_SPOTS = { coffee: COFFEE, stretch: STRETCH, lounge: LOUNGE, stroll: STROLL };
 
 export function canLoaf(agent) {
-  if (!agent || !hasFreshTask(agent) || agent.state !== 'idle') return false;
-  if (agent.lastStatusTs == null) return false;
-  if (agent.cfg?.kind === 'on_demand' && agent.lastSeenTs == null) return false;
+  if (!agent || agent.state !== 'idle' || !shouldShowOnFloor(agent)) return false;
+  // 常驻角色的日常动作不依赖心跳；未知或旧 idle 仍保留原来的数据标记。
+  // 按需工具只有真正上报过状态才加入休息，单次交接不算加入日常。
+  if (agent.cfg?.kind === 'on_demand' && agent.lastStatusTs == null) return false;
   return true;
+}
+
+export function leisureLabel(agent) {
+  if (!agent.ambientLabel) return '';
+  return `${hasFreshTask(agent) ? '摸鱼' : '日常动画'} · ${agent.ambientLabel}`;
 }
 
 export function loafScript(agent, kind, spot, dwell) {

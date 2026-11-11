@@ -1,6 +1,7 @@
 // 圆润机器人：办公室人物与侧栏头像共用同一套造型，只读 Agent 状态。
 import { shade, muteHex } from './iso.js';
 import { hasFreshTask } from './presence.js';
+import { canLoaf } from './ambient.js';
 
 export const ROBOT_BOUNDS = { halfWidth: 20, height: 49 };
 
@@ -19,7 +20,8 @@ const line = (ctx, points, color, width = 1.4) => {
 };
 
 function palette(a) {
-  const active = a.presence === 'fresh';
+  // 角色的精神状态属于画面表现；真实在线状态仍由姓名旁的圆点表示。
+  const active = a.presence === 'fresh' || canLoaf(a);
   const accent = active ? a.color : muteHex(a.color, 0.85);
   return {
     active, accent,
