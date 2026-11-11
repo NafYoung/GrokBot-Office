@@ -47,6 +47,7 @@ export const WORKING_STATES = ['coding', 'browsing', 'terminal', 'thinking', 'ne
 export const AGENTS = [
   {
     id: 'grok', name: 'Grok Bot', role: '前台总管', color: '#3b82f6',
+    look: { accessory: 'headset', badge: 'spark' },
     kind: 'resident', contact: 'expected',
     aliases: ['grokbot', 'grok bot', '前台总管'],
     desk: { x: 7, y: 0 },
@@ -60,6 +61,7 @@ export const AGENTS = [
   },
   {
     id: 'newbee', name: 'newbee naf', role: '个人助理', color: '#eab308',
+    look: { accessory: 'antenna', badge: 'heart' },
     kind: 'resident', contact: 'expected',
     aliases: ['newbee naf', '个人助理'],
     desk: { x: 4, y: 4 },
@@ -73,6 +75,7 @@ export const AGENTS = [
   },
   {
     id: 'guan', name: '观世界', role: 'AI 资讯', color: '#22d3ee',
+    look: { accessory: 'radar', badge: 'globe' },
     kind: 'resident', contact: 'expected',
     aliases: ['观世界'],
     desk: { x: 10, y: 1 },
@@ -87,6 +90,7 @@ export const AGENTS = [
   {
     // 当前不在可联系名单，席位保留，默认「未连接」；一旦发来事件就按实时显示
     id: 'diaoyan', name: '调研简报', role: '调研写作', color: '#f97316',
+    look: { accessory: 'glasses', badge: 'note' },
     kind: 'resident', contact: 'unconnected',
     aliases: ['调研简报', 'JD调研', 'jd调研', 'jddiaoyan', 'jd'],
     desk: { x: 12, y: 4 },
@@ -100,6 +104,7 @@ export const AGENTS = [
   },
   {
     id: 'zhuxian', name: '主线学习总管', role: '主线教务', color: '#8b7cf6',
+    look: { accessory: 'cap', badge: 'book' },
     kind: 'resident', contact: 'expected',
     aliases: ['主线学习总管', '学习总管'],
     desk: { x: 8, y: 5 },
@@ -113,8 +118,9 @@ export const AGENTS = [
   },
   {
     id: 'zhishiku', name: '知识库', role: '知识管理', color: '#22c55e',
+    look: { accessory: 'glasses', badge: 'book' },
     kind: 'resident', contact: 'expected',
-    aliases: ['知识库'],
+    aliases: ['知识库', 'nafyoung的知识库'],
     desk: { x: 10, y: 8 },
     demo: {
       tasks: [
@@ -126,6 +132,7 @@ export const AGENTS = [
   },
   {
     id: 'mianshi', name: '面试陪练', role: '面试口述', color: '#fb923c',
+    look: { accessory: 'headset', badge: 'chat' },
     kind: 'resident', contact: 'unconnected',
     aliases: ['面试陪练'],
     desk: { x: 12, y: 1 },
@@ -139,6 +146,7 @@ export const AGENTS = [
   },
   {
     id: 'qiwen', name: '奇闻异事', role: '观点闲聊', color: '#a855f7',
+    look: { accessory: 'ears', badge: 'spark' },
     kind: 'resident', contact: 'expected',
     aliases: ['奇闻异事'],
     desk: { x: 1, y: 6 },
@@ -152,6 +160,7 @@ export const AGENTS = [
   },
   {
     id: 'ziliao', name: '主线资料员', role: '按需助手', color: '#38bdf8',
+    look: { accessory: 'antenna', badge: 'note' },
     kind: 'auxiliary', contact: 'expected',
     aliases: ['主线资料员', '资料员'],
     spot: [3, 9],
@@ -165,6 +174,7 @@ export const AGENTS = [
   },
   {
     id: 'shiyan', name: '主线实验助教', role: '按需助手', color: '#c084fc',
+    look: { accessory: 'goggles', badge: 'flask' },
     kind: 'auxiliary', contact: 'expected',
     aliases: ['主线实验助教', '实验助教'],
     spot: [8, 9],
@@ -178,6 +188,7 @@ export const AGENTS = [
   },
   {
     id: 'yanshou', name: '主线验收员', role: '按需助手', color: '#2dd4bf',
+    look: { accessory: 'antenna', badge: 'check' },
     kind: 'auxiliary', contact: 'expected',
     aliases: ['主线验收员', '验收员'],
     spot: [5, 7],
@@ -191,6 +202,7 @@ export const AGENTS = [
   },
   {
     id: 'eggbot', name: 'Dr Eggbot', role: '按需设计', color: '#f472b6',
+    look: { accessory: 'sprout', badge: 'palette' },
     kind: 'on_demand', contact: 'expected',
     aliases: ['dr eggbot', 'eggbot', 'egg'],
     spot: [1, 8],
@@ -238,9 +250,25 @@ export const WALLS = [
 ];
 
 export const GATHER = [[5, 1], [6, 1], [8, 1], [5, 2], [6, 2], [7, 2], [8, 2]];
-export const LOUNGE = [[5, 9], [7, 9], [4, 9], [8, 9]];
-// 空闲时的去处。只有「实时 + 空闲」才会走过去，不代表有新任务。
+// 寻路停在沙发前，再以坐垫上的位置绘制坐姿；每个入口对应一个独立座位。
+export const SOFA_SLOTS = [
+  {approach:[5, 9], seat:[5.6, 8.8, .35]},
+  {approach:[7, 9], seat:[7.4, 8.8, .35]},
+];
+export const LOUNGE = SOFA_SLOTS.map(slot => slot.approach);
+// 空闲时的去处；日常动作不改变真实任务和联系时间。
 export const COFFEE = [[1, 2], [1, 5], [3, 5]];
 export const STRETCH = [[4, 7], [6, 7], [8, 7], [11, 6]];
+export const STROLL = [[3, 2], [4, 3], [7, 3], [9, 6], [12, 7], [8, 9]];
+
+// 与 render.js 家具模型相同的边界：[x, y, 宽, 深, 高]。
+export const INTERACTABLES = [
+  {id:'coffee-bar', label:'咖啡吧', action:'coffee', bounds:[0, 2, 1, 4, 1.3]},
+  {id:'coffee-table', label:'咖啡桌', action:'coffee', bounds:[1.95, 2.95, 1.1, 2.1, .98]},
+  {id:'sofa', label:'沙发', action:'lounge', bounds:[4.88, 8, 3.26, 1, .95]},
+  ...Object.entries(DESKS).map(([agentId, {x, y}]) => ({
+    id:`desk-${agentId}`, label:'工位', action:'home', agentId, bounds:[x, y, 2, 1, 1.14],
+  })),
+];
 
 export const FONT = '"WenQuanYi Micro Hei", "PingFang SC", "Noto Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif';

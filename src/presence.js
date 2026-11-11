@@ -10,6 +10,17 @@ export function classifyPresence({ contact, lastSeenTs, nowSec, staleAfterSec, o
   return 'fresh';
 }
 
+// 联系时间和任务时间分别计算；交接只能证明发起者有联系，不能刷新旧任务。
+export function updatePresence(agent, options) {
+  agent.presence = classifyPresence({ ...options, contact: agent.cfg.contact, lastSeenTs: agent.lastSeenTs });
+  agent.taskPresence = agent.demoActive && options.demo ? 'fresh'
+    : classifyPresence({ ...options, contact: 'expected', lastSeenTs: agent.lastStatusTs });
+}
+
+export function hasFreshTask(agent) {
+  return agent.presence === 'fresh' && (agent.demoActive || agent.taskPresence === 'fresh');
+}
+
 export function formatAge(lastSeenTs, nowSec) {
   if (lastSeenTs == null) return '尚无事件';
   const s = Math.max(0, Math.floor(nowSec - lastSeenTs));

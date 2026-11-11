@@ -3,7 +3,9 @@ import json
 import re
 import sys
 import threading
+import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -168,6 +170,131 @@ class TokenTest(unittest.TestCase):
         finally:
             stop(srv)
 
+    def test_reads_require_bearer_or_browser_session(self):
+        srv = start(token="test-office-token")
+        try:
+            for path in ["/api/office", "/api/agents", "/api/health", "/api/events/stream", "/api/integration"]:
+                for method in ["GET", "HEAD"]:
+                    self.assertEqual(request(srv, method, path)[0], 401, path)
+            self.assertEqual(request(srv, "GET", "/")[0], 200)
+            self.assertFalse(request(srv, "GET", "/api/session")[1]["authenticated"])
+            self.assertEqual(request(srv, "POST", "/api/session", headers={"Authorization": "Bearer wrong"})[0], 401)
+            conn = http.client.HTTPConnection(*srv.server_address, timeout=5)
+            conn.request("POST", "/api/session", headers={"Authorization": "Bearer test-office-token"})
+            response = conn.getresponse()
+            self.assertEqual(response.status, 200)
+            cookie = response.getheader("Set-Cookie")
+            self.assertIn("HttpOnly", cookie)
+            self.assertIn("SameSite=Strict", cookie)
+            self.assertNotIn("test-office-token", cookie)
+            response.read()
+            conn.close()
+            headers = {"Cookie": cookie.split(";", 1)[0]}
+            self.assertEqual(request(srv, "GET", "/api/office", headers=headers)[0], 200)
+            self.assertEqual(request(srv, "HEAD", "/api/events/stream", headers=headers)[0], 200)
+            self.assertTrue(request(srv, "GET", "/api/session", headers=headers)[1]["authenticated"])
+            self.assertEqual(request(srv, "POST", "/api/events", {"agent": "grok", "state": "idle"}, headers)[0], 401)
+            self.assertEqual(request(srv, "GET", "/api/office", headers={"Authorization": "Bearer test-office-token"})[0], 200)
+            self.assertEqual(request(srv, "GET", "/api/office", headers={"Cookie": "office_session=bad"})[0], 401)
+            self.assertEqual(request(srv, "GET", "/api/office", headers={"Cookie": headers["Cookie"] + "tampered"})[0], 401)
+            stream_conn = http.client.HTTPConnection(*srv.server_address, timeout=5)
+            stream_conn.request("GET", "/api/events/stream", headers=headers)
+            stream_response = stream_conn.getresponse()
+            while stream_response.readline().strip():
+                pass  # 消费初始快照，再让会话在等待新事件时过期。
+            with patch.object(server.time, "time", return_value=server.time.time() + 13 * 60 * 60):
+                self.assertEqual(request(srv, "GET", "/api/office", headers=headers)[0], 401)
+                srv.hub.publish(srv.hub.validate({"agent": "grok", "state": "coding", "text": "expired-session-must-not-read"}))
+                self.assertEqual(stream_response.readline().decode().strip(), "event: auth-required")
+            stream_response.close()
+            stream_conn.close()
+        finally:
+            stop(srv)
+
+
+class StaticFilesTest(unittest.TestCase):
+    def test_only_public_assets_are_served_and_missing_files_return_404(self):
+        srv = start()
+        try:
+            for method in ["GET", "HEAD"]:
+                for path in ["/server.py", "/office_report.py", "/integration.py", "/.git/HEAD", "/.git/config", "/data/office-state.json", "/src/", "/missing", "/src/../server.py", "/%2egit/HEAD"]:
+                    self.assertEqual(request(srv, method, path)[0], 404, (method, path))
+                for path in ["/", "/index.html", "/style.css", "/src/main.js"]:
+                    self.assertEqual(request(srv, method, path)[0], 200, (method, path))
+        finally:
+            stop(srv)
+
+
+class HubConsistencyTest(unittest.TestCase):
+    def test_handoff_only_presence_survives_restart_without_inventing_a_status(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(server, "STATE_PATH", Path(folder) / "state.json"):
+            hub = server.Hub(server.load_office(), persist=True)
+            event = hub.validate({"type": "handoff", "agent": "eggbot", "to": "grok"})
+            hub.publish(event)
+            restored = server.Hub(server.load_office(), persist=True)
+            item = restored.snapshot()[0]
+            self.assertEqual(item["agent"], "eggbot")
+            self.assertEqual(item["type"], "presence")
+            self.assertNotIn("state", item)
+            self.assertEqual(item["seen"], event["ts"])
+            next_event = restored.validate({"agent": "eggbot", "state": "coding"})
+            restored.publish(next_event)
+            self.assertGreater(next_event["seq"], event["seq"])
+            self.assertNotEqual(next_event["epoch"], event["epoch"])
+
+    def test_legacy_last_seen_only_is_restored(self):
+        with tempfile.TemporaryDirectory() as folder, patch.object(server, "STATE_PATH", Path(folder) / "state.json"):
+            server.STATE_PATH.write_text(json.dumps({"last": {}, "lastSeen": {"eggbot": 123}, "recent": []}))
+            hub = server.Hub(server.load_office(), persist=True)
+            self.assertEqual(hub.snapshot()[0]["seen"], 123)
+            self.assertEqual(hub.snapshot()[0]["type"], "presence")
+
+    def test_event_during_subscription_is_delivered_after_snapshot(self):
+        hub = server.Hub(server.load_office())
+        hub.publish(hub.validate({"agent": "grok", "state": "coding"}))
+        captured = threading.Event()
+        release = threading.Event()
+        publishing = threading.Event()
+        original = hub._office_payload_unlocked
+        result = []
+        def delayed_snapshot():
+            snapshot = original()
+            captured.set()
+            self.assertTrue(release.wait(3))
+            return snapshot
+        def publish():
+            publishing.set()
+            hub.publish(hub.validate({"agent": "grok", "state": "needsYou"}))
+        with patch.object(hub, "_office_payload_unlocked", delayed_snapshot):
+            subscriber = threading.Thread(target=lambda: result.append(hub.subscribe()))
+            subscriber.start()
+            self.assertTrue(captured.wait(3))
+            publisher = threading.Thread(target=publish)
+            publisher.start()
+            self.assertTrue(publishing.wait(3))
+            release.set()
+            subscriber.join(3)
+            publisher.join(3)
+        q = result[0]
+        kind, data = q.get(timeout=1)
+        self.assertEqual((kind, data["last"][0]["state"]), ("snapshot", "coding"))
+        kind, data = q.get(timeout=1)
+        self.assertEqual((kind, data["state"]), ("event", "needsYou"))
+
+    def test_slow_subscriber_gets_replacement_snapshot_and_keeps_receiving(self):
+        hub = server.Hub(server.load_office())
+        q = hub.subscribe()
+        for i in range(205):
+            hub.publish(hub.validate({"agent": "grok", "state": "coding", "text": str(i)}))
+        kind, snapshot = q.get_nowait()
+        self.assertEqual(kind, "snapshot")
+        self.assertTrue(snapshot["last"])
+        self.assertIn(q, hub.subscribers)
+        while not q.empty():
+            q.get_nowait()
+        hub.publish(hub.validate({"agent": "grok", "state": "needsYou"}))
+        self.assertEqual(q.get_nowait()[1]["state"], "needsYou")
+
 
 class StreamTest(unittest.TestCase):
     def read_event(self, resp):
@@ -195,8 +322,10 @@ class StreamTest(unittest.TestCase):
 
             kind, data = self.read_event(resp)
             self.assertEqual(kind, "snapshot")
-            self.assertEqual([e["text"] for e in data], ["before"])
-            self.assertIn("seen", data[0])
+            self.assertEqual([e["text"] for e in data["last"]], ["before"])
+            self.assertIn("seen", data["last"][0])
+            self.assertEqual(data["recent"][0]["text"], "before")
+            self.assertTrue(data["epoch"])
 
             _, ack = request(srv, "POST", "/api/events", {"agent": "guan", "state": "browsing", "text": "after"})
             self.assertEqual(ack["watching"], 1)

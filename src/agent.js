@@ -45,6 +45,12 @@ export class Agent {
     this.prop = null;
     this.ambient = null;
     this.ambientLabel = '';
+    this.ambientStage = null;
+    this.ambientSpot = null;
+    this.activityLabel = '';
+    this.activityKind = null;
+    this.manualAction = null;
+    this.lastLoaf = null;
     this.loafIn = null;
     this.lastTask = null;
     this.speed = 2.1;
@@ -54,11 +60,18 @@ export class Agent {
     this.phase = (cfg.id.charCodeAt(0) % 7) * 0.9;
     this.lastSeenTs = null;
     this.lastStatusTs = null;
+    this.taskPresence = 'unknown';
+    this.tasks = [];
+    this.diagnostic = {};
+    this.runtime = null;
+    this.lastEventSeq = null;
+    this.eventEpoch = null;
     this.presence = cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
     this.demoActive = false;
   }
 
   snapToSeat() {
+    this.manualAction = null;
     this.x = this.seat[0] + 0.5;
     this.y = this.seat[1] + 0.5;
     this.fx = 0;
@@ -69,6 +82,10 @@ export class Agent {
     this.prop = null;
     this.ambient = null;
     this.ambientLabel = '';
+    this.ambientStage = null;
+    this.ambientSpot = null;
+    this.activityLabel = '';
+    this.activityKind = null;
     this.path = [];
     this.script = [];
     this.cur = null;
@@ -80,17 +97,29 @@ export class Agent {
     this.text = '';
     this.lastSeenTs = null;
     this.lastStatusTs = null;
+    this.taskPresence = 'unknown';
+    this.tasks = [];
+    this.diagnostic = {};
+    this.runtime = null;
+    this.lastEventSeq = null;
+    this.eventEpoch = null;
     this.presence = this.cfg.contact === 'unconnected' ? 'unconnected' : 'unknown';
     this.demoActive = false;
     this.lastTask = null;
     this.loafIn = null;
+    this.lastLoaf = null;
   }
 
   clearPose() {
+    this.manualAction = null;
     this.carry = false;
     this.prop = null;
     this.ambient = null;
     this.ambientLabel = '';
+    this.ambientStage = null;
+    this.ambientSpot = null;
+    this.activityLabel = '';
+    this.activityKind = null;
   }
 
   interrupt(script) {
@@ -127,6 +156,10 @@ export class Agent {
         this.state = a.state;
         this.text = a.text;
         break;
+      case 'activity':
+        this.activityLabel = a.label || '';
+        this.activityKind = a.kind || null;
+        break;
       case 'sit':
         this.seated = true;
         this.x = this.seat[0] + 0.5;
@@ -134,10 +167,17 @@ export class Agent {
         this.fx = 0; this.fy = -1;
         break;
       case 'carry': this.carry = a.on; break;
+      case 'pose':
+        this.seated = a.seated;
+        if (a.fx != null) this.fx = a.fx;
+        if (a.fy != null) this.fy = a.fy;
+        break;
       case 'mark':
         this.ambient = a.ambient ?? null;
         this.ambientLabel = a.label || '';
         this.prop = a.prop ?? null;
+        this.ambientStage = a.stage ?? null;
+        this.ambientSpot = a.spot ?? null;
         break;
       case 'call': a.fn(this); break;
       case 'snap': this.snapToSeat(); break;

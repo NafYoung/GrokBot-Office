@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { World } from '../src/world.js';
 import { Agent } from '../src/agent.js';
 import { Simulation } from '../src/sim.js';
-import { AGENTS, COFFEE, STRETCH, LOUNGE } from '../src/config.js';
-import { canLoaf, LOAF } from '../src/ambient.js';
+import { AGENTS, COFFEE, STRETCH, LOUNGE, STROLL } from '../src/config.js';
+import { canLoaf, leisureLabel, LOAF, loafScript, OFFICE_PACE } from '../src/ambient.js';
 
-const build = () => {
+const build = (rand = () => 0) => {
   const world = new World();
   const agents = AGENTS.map((c) => new Agent(c, world));
   const logs = [];
-  const sim = new Simulation({ agents, rand: () => 0, onLog: (e) => logs.push(e) });
+  const sim = new Simulation({ agents, rand, onLog: (e) => logs.push(e) });
   return { world, agents, sim, logs };
 };
 
@@ -21,27 +21,97 @@ const step = (agents, sim, seconds, dt = 0.1) => {
   }
 };
 
-test('咖啡位、伸展位、沙发位都能从每个座位走到', () => {
+test('咖啡位、伸展位、休息位和散步位都能从每个座位走到', () => {
   const { world, agents } = build();
-  const spots = [...COFFEE, ...STRETCH, ...LOUNGE];
+  const spots = [...COFFEE, ...STRETCH, ...LOUNGE, ...STROLL];
   for (const spot of spots) assert.equal(world.walkable(...spot), true, String(spot));
   for (const a of agents) for (const spot of spots) {
     assert.ok(world.findPath(a.seat, spot), `${a.id} -> ${spot}`);
   }
 });
 
-test('没收到事件的人不会去摸鱼', () => {
-  const { agents, sim } = build();
+test('正常办公十分钟以在座为主，错峰且最多两人自动外出，所有常驻成员都有机会', () => {
+  const {agents,sim,logs} = build();
+  const cast = agents.filter(a=>a.cfg.kind !== 'on_demand');
+  step(agents,sim,10);
+  assert.ok(cast.every(a=>a.seated && !a.ambientSpot));
+  const previous = new Set(), visited = new Set(), returned = new Map();
+  let lastStart = -Infinity, atDesk = 0, samples = 0;
+  for (let t=10;t<600;t+=.1) {
+    step(agents,sim,.1);
+    const away = cast.filter(a=>a.ambientSpot || a.moving || a.cell.join() !== a.seat.join());
+    assert.ok(away.length <= 2);
+    atDesk += cast.length-away.length;
+    samples += cast.length;
+    for (const a of cast) {
+      if (a.ambientSpot && !previous.has(a.id)) {
+        assert.ok(t-lastStart >= OFFICE_PACE.gap[0]-.2, '出发错开');
+        if (returned.has(a.id)) assert.ok(t-returned.get(a.id) >= OFFICE_PACE.desk[0]-.2, '回座后充分停留');
+        lastStart=t;
+        visited.add(a.id);
+        previous.add(a.id);
+      } else if (!a.ambientSpot && previous.has(a.id)) {
+        previous.delete(a.id);
+        returned.set(a.id,t);
+      }
+    }
+  }
+  assert.ok(atDesk/samples > .9, `在座比例 ${atDesk/samples}`);
+  assert.equal(visited.size,cast.length);
+  assert.equal(logs.length,0);
+});
+
+test('手动安排立即响应但不会继续添人，完成后回到正常节奏；退出预览也恢复', () => {
+  const {agents,sim} = build();
+  for (const id of ['grok','guan','qiwen']) assert.equal(sim.sceneAction(id,'stretch').ok,true);
+  agents.forEach(a=>a.loafIn=0);
+  sim.update(.1);
+  assert.equal(agents.filter(a=>a.ambientSpot).length,3);
+  sim.sceneAction('grok','home');
+  assert.ok(sim.find('grok').loafIn >= OFFICE_PACE.desk[0]);
+  sim.stop();
+  sim.start({rest:true});
+  step(agents,sim,10);
+  assert.ok(agents.filter(a=>a.ambientSpot).length <= 2);
+  sim.stop();
+  step(agents,sim,10);
+  assert.ok(agents.every(a=>!a.ambientSpot));
+  assert.equal(sim.ambient.pace,OFFICE_PACE);
+});
+
+test('默认常驻角色有日常活动，但不生成在线状态、任务时间或日志', () => {
+  const { agents, sim, logs } = build();
   for (const a of agents) a.loafIn = 0;
+  const before = agents.map(a => ({presence:a.presence, state:a.state, text:a.text}));
+  const moved = new Set();
+  for (let t = 0; t < 180; t += .1) {
+    step(agents, sim, .1);
+    for (const a of agents) if (a.moving) moved.add(a.id);
+  }
+  assert.ok(moved.size >= 6, `日常活动成员数量 ${moved.size}`);
+  assert.equal(moved.has('eggbot'), false);
+  assert.deepEqual(agents.map(a => ({presence:a.presence,state:a.state,text:a.text})), before);
+  assert.ok(agents.every(a => a.lastSeenTs == null && a.lastStatusTs == null));
+  assert.equal(logs.length, 0);
+  assert.ok(agents.some(a => leisureLabel(a).startsWith('日常动画')));
+});
+
+test('忙碌、等待确认和出错的任务即使过期也不能擅自当作空闲', () => {
+  const { agents, sim } = build();
+  const cast = agents.slice(0, 4);
+  for (const [i, a] of cast.entries()) {
+    sim.applyEvent({agent:a.id,state:['coding','browsing','needsYou','error'][i],text:'尚未结束',ts:1},{immediate:true});
+    a.loafIn = 0;
+  }
   step(agents, sim, 20);
-  for (const a of agents) {
+  for (const a of cast) {
     assert.equal(canLoaf(a), false);
     assert.equal(a.ambient, null);
     assert.deepEqual(a.cell, a.seat);
   }
 });
 
-test('实时空闲才会去倒咖啡、活动或坐沙发，而且状态仍是空闲', () => {
+test('已确认空闲会去倒咖啡、活动或坐沙发，而且状态仍是空闲', () => {
   const { agents, sim, logs } = build();
   const qiwen = agents.find((a) => a.id === 'qiwen');
   sim.applyEvent({ agent: 'qiwen', state: 'idle', text: '这会儿没事' });
@@ -80,21 +150,26 @@ test('重复的 idle 不会把正在摸鱼的人拽回工位', () => {
   assert.notEqual(qiwen.script[0]?.type, 'set');
 });
 
-test('新的工作会打断摸鱼，过期则停止并走回座位', () => {
+test('空闲上报过期后日常继续，新的工作会立即打断摸鱼并回座位', () => {
   const { agents, sim } = build();
   const qiwen = agents.find((a) => a.id === 'qiwen');
   const guan = agents.find((a) => a.id === 'guan');
   for (const a of [qiwen, guan]) {
     sim.applyEvent({ agent: a.id, state: 'idle', text: '空闲' });
     a.presence = 'fresh';
-    a.loafIn = 0;
+    a.loafIn = 1000;
   }
+  assert.equal(sim.sceneAction(qiwen.id, 'coffee').ok, true);
   step(agents, sim, 1);
   assert.ok(qiwen.ambient);
-  assert.ok(guan.ambient);
+  // 第二人的显式安排不受自主活动的出发间隔限制。
+  assert.equal(sim.sceneAction(guan.id, 'lounge').ok, true);
+  step(agents, sim, .1);
   guan.presence = 'offline';
+  guan.taskPresence = 'offline';
   sim.update(0.1);
-  assert.equal(guan.ambient, null);
+  assert.ok(guan.ambient);
+  assert.ok(leisureLabel(guan).startsWith('日常动画'));
   sim.applyEvent({ agent: 'qiwen', state: 'coding', text: '开始写' });
   assert.equal(qiwen.ambient, null);
   assert.equal(qiwen.prop, null);
@@ -102,6 +177,140 @@ test('新的工作会打断摸鱼，过期则停止并走回座位', () => {
   assert.equal(qiwen.state, 'coding');
   assert.equal(qiwen.text, '开始写');
   assert.deepEqual(qiwen.cell, qiwen.seat);
-  assert.deepEqual(guan.cell, guan.seat);
-  assert.equal(guan.ambient, null);
+  assert.equal(canLoaf(guan), true);
+  assert.equal(guan.presence, 'offline');
+});
+
+test('同时空闲也会错峰出发、预留不同位置，下一轮换一种活动', () => {
+  const { agents, sim } = build();
+  const active = agents.filter((a) => a.cfg.kind === 'resident');
+  for (const a of active) {
+    sim.applyEvent({ agent: a.id, state: 'idle', text: '没有任务' });
+    a.presence = 'fresh';
+    a.loafIn = 0;
+  }
+  sim.update(0.1);
+  const reserved = active.map((a) => a.ambientSpot?.join(',')).filter(Boolean);
+  assert.equal(new Set(reserved).size, reserved.length);
+  assert.equal(reserved.length, 1);
+  sim.ambient.departureIn = 0;
+  sim.update(.1);
+  assert.equal(active.filter(a => a.ambientSpot).length, 2);
+  sim.ambient.departureIn = 0;
+  sim.update(.1);
+  assert.equal(active.filter(a => a.ambientSpot).length, 2);
+  assert.equal(new Set(active.filter(a=>a.ambientSpot).map(a=>a.ambientSpot.join())).size, 2);
+  for (const a of active.filter((a) => a.ambientSpot)) {
+    assert.ok(!agents.some((other) => other !== a && other.seat.join() === a.ambientSpot.join()));
+  }
+  const qiwen = agents.find((a) => a.id === 'qiwen');
+  qiwen.lastLoaf = 'coffee';
+  const choice = sim.ambient.chooseActivity(qiwen);
+  assert.ok(choice);
+  assert.notEqual(choice.kind, 'coffee');
+});
+
+test('休息区坐下留在目的地，结束后再走回自己的座位', () => {
+  const { agents, sim } = build();
+  const a = agents.find((a) => a.id === 'qiwen');
+  sim.applyEvent({ agent: a.id, state: 'idle' });
+  a.presence = 'fresh';
+  const spot = [5, 9];
+  a.interrupt(loafScript(a, 'lounge', spot, 3));
+  let sat = false;
+  for (let t = 0; t < 20; t += 0.1) {
+    a.update(0.1);
+    if (a.ambientStage === 'doing') {
+      sat = true;
+      assert.equal(a.seated, true);
+      assert.deepEqual(a.cell, spot);
+    }
+  }
+  assert.ok(sat);
+  assert.deepEqual(a.cell, a.seat);
+  assert.equal(a.ambient, null);
+  assert.equal(a.ambientSpot, null);
+});
+
+test('休息演示持续保持空闲，会用到四种活动且不生成任务日志', () => {
+  let seed = 7;
+  const { agents, sim, logs } = build(() => {
+    seed = (seed * 1664525 + 1013904223) >>> 0;
+    return seed / 2 ** 32;
+  });
+  sim.start({ rest: true });
+  const active = agents.filter((a) => a.cfg.kind !== 'on_demand');
+  const seen = new Set();
+  let moving = false;
+  for (let t = 0; t < 180; t += 0.1) {
+    sim.update(0.1);
+    agents.forEach((a) => a.update(0.1));
+    for (const a of active) {
+      assert.equal(a.state, 'idle');
+      assert.equal(a.text, '【演示】暂时没有任务');
+      if (a.ambient) seen.add(a.ambient);
+      moving ||= a.moving;
+    }
+  }
+  assert.ok(moving);
+  assert.deepEqual([...seen].sort(), Object.keys(LOAF).sort());
+  assert.equal(logs.length, 0);
+  sim.stop();
+  assert.ok(agents.every((a) => a.ambientSpot == null && a.lastSeenTs == null && !a.demoActive));
+});
+
+test('任务抢占释放休息位置，刚排定的动作也立即取消', () => {
+  const { agents, sim } = build();
+  const a = agents.find((a) => a.id === 'qiwen');
+  sim.applyEvent({ agent: a.id, state: 'idle' });
+  a.presence = 'fresh';
+  a.loafIn = 0;
+  sim.update(0.1);
+  assert.ok(a.ambientSpot);
+  sim.applyEvent({agent:a.id,state:'coding',text:'开始工作'});
+  assert.equal(a.ambientSpot, null);
+  step(agents, sim, 2);
+  sim.applyEvent({agent:a.id,state:'idle',text:'工作完成'});
+  a.loafIn = 0;
+  sim.ambient.departureIn = 0;
+  step(agents, sim, 2);
+  assert.ok(a.ambientSpot);
+  sim.applyEvent({ agent: a.id, state: 'needsYou', text: '请确认' });
+  assert.equal(a.state, 'needsYou');
+  assert.equal(a.ambientSpot, null);
+  assert.equal(a.ambientStage, null);
+  assert.equal(a.prop, null);
+  step(agents, sim, 20);
+  assert.equal(a.state, 'needsYou');
+});
+
+test('空闲一小时仍持续活动，恢复快照和下一项任务都保留真实记录', () => {
+  const { agents, sim, logs } = build();
+  const a = sim.find('guan');
+  const finishedAt = Date.now() / 1000 - 3600;
+  sim.applyEvent({agent:a.id,state:'idle',text:'上个任务已完成',ts:finishedAt},{immediate:true});
+  a.loafIn = 0;
+  const phases = new Set();
+  for (let t = 0; t < 600; t += .1) {
+    sim.refreshPresence(Date.now() / 1000);
+    step(agents, sim, .1);
+    if (a.ambient) phases.add(a.ambient);
+    assert.equal(a.lastSeenTs, finishedAt);
+    assert.equal(a.lastStatusTs, finishedAt);
+    assert.equal(a.presence, 'offline');
+    assert.equal(a.text, '上个任务已完成');
+  }
+  assert.ok(phases.size >= 2);
+  assert.equal(logs.length, 0);
+  sim.applyEvent({agent:a.id,state:'terminal',text:'新的真实任务'});
+  assert.equal(a.ambient, null);
+  assert.equal(a.prop, null);
+  step(agents, sim, 15);
+  assert.equal(a.text, '新的真实任务');
+  assert.deepEqual(a.cell, a.seat);
+  sim.applyEvent({agent:a.id,state:'idle',text:'新任务完成'});
+  step(agents, sim, 8);
+  assert.equal(a.ambient, null);
+  assert.ok(a.loafIn >= OFFICE_PACE.desk[0] - 9);
+  assert.equal(a.text, '新任务完成');
 });

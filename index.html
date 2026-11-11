@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="theme-color" content="#0a1020" />
+  <link rel="icon" href="data:," />
   <title>YOUNG NAF 的 Bot 办公室</title>
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -19,6 +20,7 @@
         </div>
         <div class="stats" id="stats"></div>
         <p class="feed-banner" id="feedBanner">正在连接事件流…</p>
+        <p class="life-hint" id="lifeHint">点选 Bot，再点咖啡吧、沙发或自己的工位 · 真实任务优先</p>
       </header>
 
       <canvas id="office" aria-label="等距办公室"></canvas>
@@ -34,8 +36,31 @@
         <button type="button" data-mode="night">夜里</button>
       </div>
 
-      <button type="button" class="sim" id="demoBtn">进入演示模式</button>
+      <div class="demo-controls">
+        <button type="button" class="sim" id="restBtn" aria-pressed="false">休息演示</button>
+        <button type="button" class="sim" id="demoBtn">进入演示模式</button>
+      </div>
     </main>
+
+    <section class="action-dock" id="actionDock" aria-label="角色操作">
+      <p class="action-empty" id="actionEmpty"><span aria-hidden="true">◇</span> 点选一个 Bot，安排它的办公室日常</p>
+      <div id="actionContent" hidden>
+        <div class="action-character">
+          <canvas id="actionPortrait" width="128" height="128" aria-hidden="true"></canvas>
+          <div class="action-name"><small>当前选中</small><b id="actionName"></b><p id="actionDoing"></p></div>
+          <button type="button" id="actionClose" aria-label="取消选择">×</button>
+        </div>
+        <div class="action-buttons" role="group" aria-label="安排日常动作">
+          <button type="button" data-scene-action="coffee"><span aria-hidden="true">☕</span>喝咖啡</button>
+          <button type="button" data-scene-action="lounge"><span aria-hidden="true">▰</span>坐沙发</button>
+          <button type="button" data-scene-action="stretch"><span aria-hidden="true">↗</span>伸懒腰</button>
+          <button type="button" data-scene-action="stroll"><span aria-hidden="true">↝</span>散散步</button>
+          <button type="button" data-scene-action="home"><span aria-hidden="true">⌂</span>回工位</button>
+        </div>
+        <p class="action-note" id="actionNote">日常动作只影响场景，真实任务到达会自动接管。</p>
+      </div>
+      <p class="action-feedback" id="actionFeedback" role="status" aria-live="polite"></p>
+    </section>
 
     <aside class="side">
       <div class="owner">
@@ -43,6 +68,31 @@
         <b id="ownerName">YOUNG NAF</b>
         <span class="badge" id="ownerBadge">等待事件</span>
       </div>
+      <form class="card auth-card" id="authForm" hidden>
+        <label for="officeToken">办公室口令</label>
+        <p class="hint">解锁后可查看实时状态和最近活动。</p>
+        <input id="officeToken" type="password" autocomplete="current-password" required />
+        <button type="submit">解锁办公室</button>
+        <p id="authMessage" role="alert"></p>
+      </form>
+      <details class="card connection-card" id="connectionCard">
+        <summary>连接诊断 · 自动采集</summary>
+        <div id="connectionStatus"></div>
+        <p class="hint">点一个 Bot 查看它的任务记录、上报来源和连接问题。</p>
+        <div id="connectionBots"></div>
+        <p class="hint">自动采集需配置可达的 Grokbot 主机网关。启动方法见仓库 GROKBOT.md；口令只保存在本机文件或环境变量中。</p>
+      </details>
+      <details class="card integration-card" id="integrationCard">
+        <summary>连接 Grokbot 的真实任务</summary>
+        <p class="hint">主动上报方式：每个 Bot 单独保存规则。也可在“连接诊断”中查看主机自动采集；只给主 Bot 保存规则不会连接其他成员。</p>
+        <label for="integrationAgent">选择要连接的 Bot</label>
+        <select id="integrationAgent"><option value="">请选择一个 Bot</option></select>
+        <button type="button" id="generateIntegration">生成接入指令</button>
+        <p id="integrationMessage" class="hint" role="status"></p>
+        <label for="integrationInstructions" id="integrationLabel" hidden>复制给 Grokbot 的配置说明（不含口令）</label>
+        <textarea id="integrationInstructions" rows="9" readonly hidden></textarea>
+        <button type="button" id="copyIntegration" hidden>复制接入指令</button>
+      </details>
       <section class="card selected-card" id="selected">
         <p class="hint">点小人、工位或名单，查看工作内容与新鲜度。</p>
       </section>
